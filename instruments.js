@@ -12,15 +12,16 @@ const Instruments = (() => {
   const ROW_INSTRUMENTS = ["kick", "snare", "clap", "hat", "cymbal", "perc", "s303", "blaster"];
 
   /* per-channel routing: send1 = how much goes to the delay bus, in parallel with dry */
+  // all channel volumes scaled to 60% of what they were
   const channels = {
-    kick:    { send1: 0,   volume: 1.2 },
-    snare:   { send1: 0,   volume: 0.75 }, // 25% quieter
-    clap:    { send1: 0,   volume: 1 },
-    hat:     { send1: 0,   volume: 1.7 },
-    cymbal:  { send1: 0,   volume: 0.5 },  // no longer sent to the delay
-    perc:    { send1: 0.8, volume: 1 },
-    s303:    { send1: 0.1, volume: 0.667 },  // 10% into the delay, 1.5x quieter
-    blaster: { send1: 0.8, volume: 2 },  // 2x louder, mostly routed into the delay
+    kick:    { send1: 0,   volume: 0.72 },
+    snare:   { send1: 0,   volume: 0.45 },
+    clap:    { send1: 0,   volume: 0.6 },
+    hat:     { send1: 0,   volume: 1.02 },
+    cymbal:  { send1: 0,   volume: 0.3 },  // no longer sent to the delay
+    perc:    { send1: 0.8, volume: 0.6 },
+    s303:    { send1: 0.1, volume: 0.4 },  // 10% into the delay
+    blaster: { send1: 0.8, volume: 1.2 },  // mostly routed into the delay
   };
 
   let bpm = 132;
@@ -41,7 +42,7 @@ const Instruments = (() => {
   // MASTER DRIVE — saturation on the summed mix, with log-domain makeup-gain
   // compensation so pushing the drive doesn't just make everything louder.
   // ============================
-  const MASTER_DRIVE_MAX = 22; // internal tanh "amount" at drive=100
+  const MASTER_DRIVE_MAX = 22 * 0.6; // rescaled so the old 60%-fader amount is now the max (at 100%)
   const MASTER_MAKEUP_DB = 8;  // dB pulled back at full drive
 
   function masterDriveCurve(amount) {

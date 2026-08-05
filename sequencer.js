@@ -14,13 +14,14 @@ const muteBtn = document.getElementById("seq-mute");
 const SPEAKER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
 const MUTED_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path d="M16 9l6 6"/><path d="M22 9l-6 6"/></svg>';
 muteBtn.innerHTML = SPEAKER_ICON;
+muteBtn.classList.add("is-unmuted"); // gold by default: sound is on
 
 let masterMuted = false;
 muteBtn.addEventListener("click", () => {
   masterMuted = !masterMuted;
   muteBtn.innerHTML = masterMuted ? MUTED_ICON : SPEAKER_ICON;
   muteBtn.setAttribute("aria-label", masterMuted ? "unmute" : "mute");
-  muteBtn.classList.toggle("is-muted", masterMuted);
+  muteBtn.classList.toggle("is-unmuted", !masterMuted); // gold when playing, grey when muted
   Instruments.setMasterMute(masterMuted);
 });
 

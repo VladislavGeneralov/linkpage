@@ -114,7 +114,13 @@ function generateBolt(x, y) {
 }
 
 /* trigger */
+function isInsideSequencer(target) {
+  return target instanceof Element && target.closest(".sequencer-module") !== null;
+}
+
 function trigger(e) {
+  if (isInsideSequencer(e.target)) return;
+
   const x = e.clientX || (e.touches && e.touches[0].clientX);
   const y = e.clientY || (e.touches && e.touches[0].clientY);
   if (x == null || y == null) return;
@@ -122,11 +128,21 @@ function trigger(e) {
   generateBolt(x, y);
 }
 
-window.addEventListener("mousedown", trigger);
-window.addEventListener("touchstart", e => {
-  if (e.cancelable) e.preventDefault();
+/* browsers fire a synthetic mousedown ~300-500ms after a touch — skip it so
+   taps don't double-trigger */
+let lastTouchTime = 0;
+
+window.addEventListener("mousedown", e => {
+  if (Date.now() - lastTouchTime < 500) return;
   trigger(e);
-}, { passive: false });
+});
+
+/* passive (no preventDefault) so touch scrolling on the page keeps working —
+   the previous preventDefault() here was blocking scroll on mobile entirely */
+window.addEventListener("touchstart", e => {
+  lastTouchTime = Date.now();
+  trigger(e);
+}, { passive: true });
 
 /* render */
 function drawBolt(b) {
