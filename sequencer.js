@@ -348,14 +348,30 @@ window.addEventListener("touchcancel", () => Instruments.stopBoltNoise());
 // flow, so the wrapper gets its width/height set explicitly here, measured
 // straight off the already-rotated panel (getBoundingClientRect reflects
 // the transform). Desktop isn't rotated, so it needs none of this.
+//
+// Measured more than once on purpose: the very first measurement can run
+// before the web font (Adventor, font-display:swap) has finished loading,
+// so it's taken against fallback-font metrics. Once the real font swaps
+// in the panel's actual size can shift slightly, leaving the wrapper's
+// reserved space stale — which is what let the bottom bolt creep up onto
+// the panel. Re-measuring after fonts/full load are ready corrects that.
 // ============================
 if (IS_MOBILE) {
   const rotateWrap = document.querySelector(".seq-rotate-wrap");
   const seqPanelEl = document.querySelector(".seq-panel");
 
-  if (rotateWrap && seqPanelEl) {
+  function measureRotatedPanel() {
+    if (!rotateWrap || !seqPanelEl) return;
     const rect = seqPanelEl.getBoundingClientRect();
     rotateWrap.style.width = rect.width + "px";
     rotateWrap.style.height = rect.height + "px";
   }
+
+  measureRotatedPanel();
+
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(measureRotatedPanel);
+  }
+
+  window.addEventListener("load", measureRotatedPanel);
 }

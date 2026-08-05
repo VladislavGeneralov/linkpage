@@ -116,7 +116,7 @@ const Instruments = (() => {
   // ============================
   // BOLT NOISE — white noise (highpass 320 / lowpass 2600), separate from
   // the sequencer's own instruments. Runs for as long as a bolt is held
-  // down, only while the sequencer is playing. 0.16 dry, 0.16 to delay.
+  // down, only while the sequencer is playing. 0.1 dry, 0.1 to delay.
   // ============================
   let boltNoiseBuffer = null;
   let boltNoiseSource = null;
@@ -147,10 +147,10 @@ const Instruments = (() => {
     lpf.frequency.value = 2600;
 
     const dryGain = audioContext.createGain();
-    dryGain.gain.value = 0.16;
+    dryGain.gain.value = 0.1;
 
     const sendGain = audioContext.createGain();
-    sendGain.gain.value = 0.16;
+    sendGain.gain.value = 0.1;
 
     source.connect(hpf);
     hpf.connect(lpf);
@@ -159,13 +159,29 @@ const Instruments = (() => {
     dryGain.connect(masterBus);
     sendGain.connect(fx1Send);
 
+    // stashed so stopBoltNoise() can disconnect the whole chain once it ends
+    source._hpf = hpf;
+    source._lpf = lpf;
+    source._dryGain = dryGain;
+    source._sendGain = sendGain;
+
     source.start();
     boltNoiseSource = source;
   }
 
   function stopBoltNoise() {
     if (!boltNoiseSource) return;
-    try { boltNoiseSource.stop(); } catch (e) {}
+    const source = boltNoiseSource;
+    try { source.stop(); } catch (e) {}
+    // onended fires async after stop(); disconnect the whole chain then so
+    // it doesn't linger in the graph waiting on GC
+    source.onended = () => {
+      source.disconnect();
+      if (source._hpf) source._hpf.disconnect();
+      if (source._lpf) source._lpf.disconnect();
+      if (source._dryGain) source._dryGain.disconnect();
+      if (source._sendGain) source._sendGain.disconnect();
+    };
     boltNoiseSource = null;
   }
 
@@ -307,6 +323,16 @@ const Instruments = (() => {
 
     osc.start(now);
     osc.stop(now + kickDur + 0.1);
+
+    osc.onended = () => {
+      osc.disconnect();
+      gain.disconnect();
+      dryGain.disconnect();
+      shaper.disconnect();
+      wetHPF.disconnect();
+      wetLPF.disconnect();
+      wetGain.disconnect();
+    };
   }
 
   // ============================
@@ -350,6 +376,16 @@ const Instruments = (() => {
     safeStop(noise, now + 0.2);
     osc.start(now);
     safeStop(osc, now + 0.15);
+
+    noise.onended = () => {
+      noise.disconnect();
+      noiseFilter.disconnect();
+      noiseGain.disconnect();
+    };
+    osc.onended = () => {
+      osc.disconnect();
+      oscGain.disconnect();
+    };
   }
 
   // ============================
@@ -384,6 +420,12 @@ const Instruments = (() => {
 
       noise.start(t);
       safeStop(noise, t + 0.2);
+
+      noise.onended = () => {
+        noise.disconnect();
+        filter.disconnect();
+        gain.disconnect();
+      };
     }
   }
 
@@ -393,7 +435,7 @@ const Instruments = (() => {
   let hatBuffer = null;
   function getHatBuffer() {
     if (!hatBuffer) {
-      const size = audioContext.sampleRate * 0.05;
+      const size = audioContext.sampleRate * 0.08;
       hatBuffer = audioContext.createBuffer(1, size, audioContext.sampleRate);
       const data = hatBuffer.getChannelData(0);
       for (let i = 0; i < size; i++) data[i] = (Math.random() * 2 - 1) * 0.3;
@@ -413,14 +455,20 @@ const Instruments = (() => {
 
     const gain = audioContext.createGain();
     gain.gain.setValueAtTime(0.15, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
 
     noise.connect(filter);
     filter.connect(gain);
     gain.connect(channelNodes.hat.inputGain);
 
     noise.start(now);
-    safeStop(noise, now + 0.05);
+    safeStop(noise, now + 0.08);
+
+    noise.onended = () => {
+      noise.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
   // ============================
@@ -464,6 +512,13 @@ const Instruments = (() => {
 
     noise.start(now);
     safeStop(noise, now + dur);
+
+    noise.onended = () => {
+      noise.disconnect();
+      hpf.disconnect();
+      lpf.disconnect();
+      gain.disconnect();
+    };
   }
 
   // ============================
@@ -492,6 +547,12 @@ const Instruments = (() => {
 
     osc.start(now);
     safeStop(osc, now + 0.35);
+
+    osc.onended = () => {
+      osc.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
   // ============================
@@ -521,6 +582,12 @@ const Instruments = (() => {
 
     osc.start(now);
     osc.stop(now + 0.28);
+
+    osc.onended = () => {
+      osc.disconnect();
+      filter.disconnect();
+      gain.disconnect();
+    };
   }
 
   // ============================
