@@ -156,9 +156,9 @@ const Instruments = (() => {
     masterMute = audioContext.createGain();
     masterMute.gain.value = 1; // unmuted by default
 
-    masterBus.connect(masterFilter);
-    masterFilter.connect(masterDrive);
-    masterDrive.connect(masterComp);
+    masterBus.connect(masterDrive);
+    masterDrive.connect(masterFilter);
+    masterFilter.connect(masterComp);
     masterComp.connect(masterMute);
     masterMute.connect(audioContext.destination);
 

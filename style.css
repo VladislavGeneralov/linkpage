@@ -36,6 +36,13 @@ body {
   to { opacity: 1; }
 }
 
+.top-bolt {
+  text-align: center;
+  font-size: 42px; /* 1.5x the 28px play button */
+  line-height: 1;
+  color: #F2C100;
+}
+
 /* MODULE SPACING (equal, driven by body gap) */
 .module {
   max-width: 800px;
