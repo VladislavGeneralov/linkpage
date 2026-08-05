@@ -27,13 +27,13 @@ muteBtn.addEventListener("click", () => {
 
 /* default pattern, one row per ROW_LABELS entry, active step indices (0-15) */
 const DEFAULT_PATTERN = [
-  [0, 6, 10],                                     // kik
-  [4, 12],                                        // snr
-  [4, 7, 9, 12, 14],                               // clp
+  [0, 1, 2, 6, 9, 10],                             // kik
+  [4, 12],                                         // snr
+  [4, 7, 9, 12],                                   // clp
   [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],         // hat
-  [14],                                            // cym
+  [2, 9],                                          // cym
   [0],                                             // prc
-  [1, 12],                                         // fx
+  [1],                                             // fx
 ];
 
 /* pattern[row][step] -> is that instrument active on that step */
