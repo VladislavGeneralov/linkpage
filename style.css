@@ -49,6 +49,21 @@ body {
   margin-bottom: 20px; /* a bit of extra room after it, on top of body's gap */
 }
 
+/* real reserved height, independent of the rotated panel's own JS-measured
+   footprint — a plain fallback buffer in case that measurement is still off
+   on some phones and the bottom bolt creeps up onto the sequencer */
+.mobile-spacer {
+  visibility: hidden;
+  height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 600px) {
+  .mobile-spacer {
+    height: 70px;
+  }
+}
+
 .top-bolt img {
   display: block;
   width: 42px; /* 1.5x the 28px play button */
