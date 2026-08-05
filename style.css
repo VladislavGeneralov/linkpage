@@ -118,6 +118,12 @@ a:hover {
   margin-bottom: 12px;
 }
 
+/* desktop default: plain wrapper, no special sizing (only the mobile
+   rotated layout needs JS-measured dimensions here, see sequencer.js) */
+.seq-rotate-wrap {
+  position: relative;
+}
+
 .seq-panel {
   width: fit-content;
   margin: 0;
@@ -182,6 +188,7 @@ a:hover {
   font-size: 9px;
   color: #6d6d6d;
   width: 20px;
+  text-align: center;
 }
 
 .seq-fader-track {
@@ -214,9 +221,9 @@ a:hover {
   -webkit-appearance: none;
   appearance: none;
   width: 70px;
-  height: 2px;
+  height: 8px; /* rectangle, slightly narrower than the 10px thumb */
   background: #3a3a3a;
-  border-radius: 1px;
+  border-radius: 2px;
   cursor: pointer;
 }
 
@@ -314,9 +321,9 @@ a:hover {
   align-self: center;
   justify-self: start;
   width: 46px;
-  height: 2px;
+  height: 6px; /* rectangle, slightly narrower than the 8px thumb */
   background: #3a3a3a;
-  border-radius: 1px;
+  border-radius: 2px;
   cursor: pointer;
 }
 
@@ -354,6 +361,74 @@ a:hover {
 .seq-step.is-playhead {
   outline: 1.5px solid rgba(120, 200, 255, 0.85);
   outline-offset: -1.5px;
+}
+
+/* ============================
+   MOBILE — the whole panel rotated 90deg, everything below either
+   compensates for that rotation (counter-rotating text/icons back to
+   horizontal, flipping slider direction) or reorders things via flex
+   `order` so build order / DOM order can stay the same as desktop.
+   Row build order and label text (2-letter vs full word) are handled in
+   sequencer.js via the same breakpoint (matchMedia("(max-width: 600px)")).
+   ============================ */
+@media (max-width: 600px) {
+  .seq-panel {
+    transform-origin: top left;
+    transform: rotate(90deg) translateY(-100%);
+    /* topbar/grid stack as a flex column so their visual order can be
+       swapped below without touching the (shared, desktop-order) DOM */
+    display: flex;
+    flex-direction: column;
+  }
+
+  .seq-topbar {
+    order: 2;
+  }
+
+  .seq-grid-wrap {
+    order: 1;
+  }
+
+  .seq-play-btn svg {
+    /* cancels the panel's 90deg rotation so the play/mute icons stay upright */
+    transform: rotate(-90deg);
+  }
+
+  /* visual order after rotation: value on top, slider in the middle, label
+     on the bottom (was label/slider/value left-to-right before rotating) */
+  .seq-fader > input[type="range"],
+  .seq-fader > .seq-fader-track {
+    order: 2;
+  }
+
+  .seq-fader label {
+    order: 3;
+    /* cancels the panel's 90deg rotation so the label reads horizontally */
+    transform: rotate(-90deg);
+  }
+
+  .seq-fader-value {
+    order: 1;
+    /* same compensation as the fader label */
+    transform: rotate(-90deg);
+  }
+
+  .seq-fader input[type="range"] {
+    /* the whole panel is rotated 90deg; this local 180deg flips the slider
+       back so it reads "up = more" instead of "up = less" */
+    transform: rotate(180deg);
+  }
+
+  .seq-label {
+    /* cancels the panel's 90deg rotation so the label reads horizontally */
+    transform: rotate(-90deg);
+  }
+
+  .seq-vol {
+    /* same compensation as the topbar faders: cancels the panel's rotation
+       so up = louder, down = quieter */
+    transform: rotate(180deg);
+  }
 }
 
 /* canvas */

@@ -1,7 +1,15 @@
 const ROWS = 7;
 const STEPS = 16;
 let TEMPO = 130; // BPM, 16th-note steps — live-adjustable via the bpm fader
-const ROW_LABELS = ["kick", "snar", "clap", "hhat", "cymb", "perc", "fx"];
+
+/* mobile gets the rotated layout (see the matching @media block in
+   style.css); desktop keeps the original horizontal one. Checked once at
+   load — matches the breakpoint used in CSS. */
+const IS_MOBILE = window.matchMedia("(max-width: 600px)").matches;
+
+const ROW_LABELS = IS_MOBILE
+  ? ["KK", "SN", "CL", "HH", "CY", "PQ", "FX"]
+  : ["kick", "snar", "clap", "hhat", "cymb", "perc", "fx"];
 
 const grid = document.getElementById("seq-grid");
 const playBtn = document.getElementById("seq-play");
@@ -52,8 +60,16 @@ const columns = Array.from({ length: STEPS }, () => []);
 /* per-row volume sliders, read back on play() to sync freshly-created audio nodes */
 const volSliders = [];
 
+/* visual left-to-right order. On mobile the panel is rotated 90deg, which
+   flips DOM build-order into screen right-to-left — so build the rows
+   fx-first/kick-last in the DOM there, so it still reads kick-first/fx-last
+   on screen. Desktop isn't rotated, so the natural ascending order already
+   reads correctly. Either way the actual instrument index (r) is untouched
+   — pattern/mute/Instruments mapping stays exactly as before. */
+const BUILD_ORDER = IS_MOBILE ? [6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6];
+
 /* build the grid: one label + 16 step buttons per row */
-for (let r = 0; r < ROWS; r++) {
+for (const r of BUILD_ORDER) {
   const label = document.createElement("div");
   label.className = "seq-label";
   label.textContent = ROW_LABELS[r];
@@ -101,7 +117,7 @@ for (let r = 0; r < ROWS; r++) {
     Instruments.setChannelVolume(instrumentKey, Number(volSlider.value));
   });
 
-  volSliders.push(volSlider);
+  volSliders[r] = volSlider; // indexed by instrument, not build order
   grid.appendChild(volSlider);
 }
 
@@ -177,12 +193,19 @@ function drawLoop() {
 }
 drawLoop();
 
+/* the filter fader is displayed as -100..100 (0 = center/bypass) but the
+   audio engine still expects its original 0..100 scale — convert only,
+   the underlying filter behavior is unchanged */
+function filterDisplayToInternal(displayValue) {
+  return (displayValue + 100) / 2;
+}
+
 /* syncs the audio engine's live settings to whatever the UI currently
    shows — used both when starting playback and for the one-off bolt preview */
 function syncAudioSettings() {
   Instruments.setTempo(TEMPO);
   Instruments.setMasterDrive(Number(driveSlider.value));
-  Instruments.setMasterFilter(Number(filterSlider.value));
+  Instruments.setMasterFilter(filterDisplayToInternal(Number(filterSlider.value)));
   Instruments.setMasterMute(masterMuted);
 
   for (let r = 0; r < ROWS; r++) {
@@ -249,17 +272,17 @@ const filterValue = document.getElementById("seq-filter-value");
 filterSlider.addEventListener("input", () => {
   const value = Number(filterSlider.value);
   filterValue.textContent = value;
-  Instruments.setMasterFilter(value);
+  Instruments.setMasterFilter(filterDisplayToInternal(value));
 });
 
 const filterResetBtn = document.getElementById("seq-filter-reset");
 
 filterResetBtn.addEventListener("click", () => {
   const start = Number(filterSlider.value);
-  const target = 50;
+  const target = 0;
   if (start === target) return;
 
-  const duration = 100; // ms
+  const duration = 200; // ms (2x slower than before)
   const startTime = performance.now();
 
   function tick(now) {
@@ -268,7 +291,7 @@ filterResetBtn.addEventListener("click", () => {
 
     filterSlider.value = value;
     filterValue.textContent = Math.round(value);
-    Instruments.setMasterFilter(value);
+    Instruments.setMasterFilter(filterDisplayToInternal(value));
 
     if (t < 1) requestAnimationFrame(tick);
   }
@@ -296,4 +319,22 @@ if (topBolt) {
       if (pattern[r][0] && !muted[r]) Instruments.trigger(r, now);
     }
   });
+}
+
+// ============================
+// ROTATED LAYOUT (mobile only) — .seq-panel is rotated 90deg via CSS.
+// `transform` never affects how much space an element reserves in normal
+// flow, so the wrapper gets its width/height set explicitly here, measured
+// straight off the already-rotated panel (getBoundingClientRect reflects
+// the transform). Desktop isn't rotated, so it needs none of this.
+// ============================
+if (IS_MOBILE) {
+  const rotateWrap = document.querySelector(".seq-rotate-wrap");
+  const seqPanelEl = document.querySelector(".seq-panel");
+
+  if (rotateWrap && seqPanelEl) {
+    const rect = seqPanelEl.getBoundingClientRect();
+    rotateWrap.style.width = rect.width + "px";
+    rotateWrap.style.height = rect.height + "px";
+  }
 }
