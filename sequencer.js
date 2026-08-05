@@ -177,8 +177,9 @@ function drawLoop() {
 }
 drawLoop();
 
-function play() {
-  audioCtx = Instruments.init();
+/* syncs the audio engine's live settings to whatever the UI currently
+   shows — used both when starting playback and for the one-off bolt preview */
+function syncAudioSettings() {
   Instruments.setTempo(TEMPO);
   Instruments.setMasterDrive(Number(driveSlider.value));
   Instruments.setMasterFilter(Number(filterSlider.value));
@@ -187,6 +188,11 @@ function play() {
   for (let r = 0; r < ROWS; r++) {
     Instruments.setChannelVolume(Instruments.ROW_INSTRUMENTS[r], Number(volSliders[r].value));
   }
+}
+
+function play() {
+  audioCtx = Instruments.init();
+  syncAudioSettings();
 
   isPlaying = true;
   currentStep = 0;
@@ -269,3 +275,23 @@ filterResetBtn.addEventListener("click", () => {
 
   requestAnimationFrame(tick);
 });
+
+// ============================
+// TOP BOLT — if the sequencer isn't playing, clicking the bolt previews
+// step 0 of the pattern once (whatever's programmed there, muted rows excluded)
+// ============================
+const topBolt = document.querySelector(".top-bolt");
+
+if (topBolt) {
+  topBolt.addEventListener("click", () => {
+    if (isPlaying) return;
+
+    audioCtx = Instruments.init();
+    syncAudioSettings();
+
+    const now = audioCtx.currentTime;
+    for (let r = 0; r < ROWS; r++) {
+      if (pattern[r][0] && !muted[r]) Instruments.trigger(r, now);
+    }
+  });
+}

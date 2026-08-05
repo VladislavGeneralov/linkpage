@@ -42,12 +42,14 @@ body {
   box-sizing: border-box;
   margin: 0 auto;
   padding: 0 20px;
-  color: #F2C100;
 }
 
-.top-bolt svg {
+.top-bolt img {
+  display: block;
   width: 42px; /* 1.5x the 28px play button */
   height: 42px;
+  /* numerically solved to tint the source image to #D5A430 */
+  filter: brightness(0) invert(71%) sepia(75%) saturate(334%) hue-rotate(0deg) brightness(77%) contrast(126%);
 }
 
 /* MODULE SPACING (equal, driven by body gap) */
@@ -93,7 +95,7 @@ a {
 }
 
 a:hover {
-  color: #C28A2E;
+  color: #D5A430;
 }
 
 .note {
@@ -154,14 +156,14 @@ a:hover {
 }
 
 .seq-play-btn:hover {
-  color: #C28A2E;
-  border-color: #C28A2E;
+  color: #D5A430;
+  border-color: #D5A430;
 }
 
 .seq-play-btn.is-playing,
 .seq-play-btn.is-unmuted {
-  color: #C28A2E;
-  border-color: #C28A2E;
+  color: #D5A430;
+  border-color: #D5A430;
 }
 
 .seq-fader {
@@ -204,8 +206,8 @@ a:hover {
 }
 
 .seq-filter-reset:hover {
-  background: #C28A2E;
-  border-color: #C28A2E;
+  background: #D5A430;
+  border-color: #D5A430;
 }
 
 .seq-fader input[type="range"] {
@@ -228,7 +230,7 @@ a:hover {
 }
 
 .seq-fader input[type="range"]:hover::-webkit-slider-thumb {
-  background: #C28A2E;
+  background: #D5A430;
 }
 
 .seq-fader input[type="range"]::-moz-range-thumb {
@@ -241,7 +243,7 @@ a:hover {
 }
 
 .seq-fader input[type="range"]:hover::-moz-range-thumb {
-  background: #C28A2E;
+  background: #D5A430;
 }
 
 .seq-grid-wrap {
@@ -298,12 +300,12 @@ a:hover {
 }
 
 .seq-mute:hover {
-  border-color: #C28A2E;
+  border-color: #D5A430;
 }
 
 .seq-mute.is-active {
-  background: #C28A2E;
-  border-color: #C28A2E;
+  background: #D5A430;
+  border-color: #D5A430;
 }
 
 .seq-vol {
@@ -328,7 +330,7 @@ a:hover {
 }
 
 .seq-vol:hover::-webkit-slider-thumb {
-  background: #C28A2E;
+  background: #D5A430;
 }
 
 .seq-vol::-moz-range-thumb {
@@ -341,12 +343,12 @@ a:hover {
 }
 
 .seq-vol:hover::-moz-range-thumb {
-  background: #C28A2E;
+  background: #D5A430;
 }
 
 .seq-step.is-active {
-  background: #C28A2E;
-  border-color: #C28A2E;
+  background: #D5A430;
+  border-color: #D5A430;
 }
 
 .seq-step.is-playhead {

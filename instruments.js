@@ -26,7 +26,7 @@ const Instruments = (() => {
   let bpm = 132;
   const delMult = 3; // 3/4-note-feel delay (matches synthesis_runtime's delay)
   const delHP = 600;
-  const delFB = 0.7;
+  const delFB = 0.6;
 
   function getDelayTime() {
     return (60 / bpm) * delMult / 4;
