@@ -448,6 +448,9 @@ a:hover {
        translateY here (pre-rotation) ends up as a horizontal nudge on
        screen once rotated — negative = left */
     transform: rotate(-90deg) translateY(-11px);
+    /* mobile-only: align by the label's own bottom edge instead of
+       centering, so it lines up with the play button's bottom edge */
+    align-items: flex-end;
   }
 
   .seq-vol {
