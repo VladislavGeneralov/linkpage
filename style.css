@@ -131,6 +131,10 @@ a:hover {
   border: 1px solid #26272c;
   border-radius: 6px;
   overflow: hidden;
+  /* 10% bigger everywhere — `zoom` (unlike transform:scale) actually
+     resizes the box for layout purposes too, so nothing needs to reflow
+     manually, and it composes cleanly with the mobile rotation below */
+  zoom: 1.2;
 }
 
 .seq-topbar {
