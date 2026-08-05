@@ -237,7 +237,7 @@ a:hover {
 
 .seq-grid {
   display: inline-grid;
-  grid-template-columns: 34px repeat(16, 20px) 24px;
+  grid-template-columns: 34px repeat(16, 20px) 24px 50px;
   gap: 3px;
 }
 
@@ -290,6 +290,44 @@ a:hover {
 .seq-mute.is-active {
   background: #C28A2E;
   border-color: #C28A2E;
+}
+
+.seq-vol {
+  -webkit-appearance: none;
+  appearance: none;
+  align-self: center;
+  justify-self: start;
+  width: 46px;
+  height: 2px;
+  background: #3a3a3a;
+  border-radius: 1px;
+  cursor: pointer;
+}
+
+.seq-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #b3b3b3;
+  transition: background 0.15s ease;
+}
+
+.seq-vol:hover::-webkit-slider-thumb {
+  background: #C28A2E;
+}
+
+.seq-vol::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: none;
+  border-radius: 50%;
+  background: #b3b3b3;
+  transition: background 0.15s ease;
+}
+
+.seq-vol:hover::-moz-range-thumb {
+  background: #C28A2E;
 }
 
 .seq-step.is-active {

@@ -1,7 +1,7 @@
-const ROWS = 8;
+const ROWS = 7;
 const STEPS = 16;
 let TEMPO = 130; // BPM, 16th-note steps — live-adjustable via the bpm fader
-const ROW_LABELS = ["kick", "snar", "clap", "hhat", "cymb", "perc", "303", "fx"];
+const ROW_LABELS = ["kick", "snar", "clap", "hhat", "cymb", "perc", "fx"];
 
 const grid = document.getElementById("seq-grid");
 const playBtn = document.getElementById("seq-play");
@@ -32,9 +32,8 @@ const DEFAULT_PATTERN = [
   [4, 7, 9, 12, 14],                               // clp
   [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],         // hat
   [14],                                            // cym
-  [1],                                             // prc
-  [0,1,3,4,6,7,9,10,12,13,14,15],                  // 303
-  [0, 12],                                         // bls
+  [0],                                             // prc
+  [1, 12],                                         // fx
 ];
 
 /* pattern[row][step] -> is that instrument active on that step */
@@ -49,6 +48,9 @@ const muted = Array(ROWS).fill(false);
 
 /* cells grouped by column so the playhead can light up a whole step at once */
 const columns = Array.from({ length: STEPS }, () => []);
+
+/* per-row volume sliders, read back on play() to sync freshly-created audio nodes */
+const volSliders = [];
 
 /* build the grid: one label + 16 step buttons per row */
 for (let r = 0; r < ROWS; r++) {
@@ -84,6 +86,23 @@ for (let r = 0; r < ROWS; r++) {
   });
 
   grid.appendChild(muteBtn);
+
+  const volSlider = document.createElement("input");
+  volSlider.type = "range";
+  volSlider.className = "seq-vol";
+  volSlider.min = "0";
+  volSlider.max = "100";
+  volSlider.step = "1";
+  volSlider.value = "90"; // 90% of that channel's current volume by default
+  volSlider.setAttribute("aria-label", `${ROW_LABELS[r]} volume`);
+
+  const instrumentKey = Instruments.ROW_INSTRUMENTS[r];
+  volSlider.addEventListener("input", () => {
+    Instruments.setChannelVolume(instrumentKey, Number(volSlider.value));
+  });
+
+  volSliders.push(volSlider);
+  grid.appendChild(volSlider);
 }
 
 let prevStep = null;
@@ -164,6 +183,10 @@ function play() {
   Instruments.setMasterDrive(Number(driveSlider.value));
   Instruments.setMasterFilter(Number(filterSlider.value));
   Instruments.setMasterMute(masterMuted);
+
+  for (let r = 0; r < ROWS; r++) {
+    Instruments.setChannelVolume(Instruments.ROW_INSTRUMENTS[r], Number(volSliders[r].value));
+  }
 
   isPlaying = true;
   currentStep = 0;

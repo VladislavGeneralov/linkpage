@@ -1,6 +1,6 @@
 /*
-  Synthesis engine for the sequencer — 8 voices ported from synthesis_runtime
-  (kick, snare, clap, hat, cymbal, perc, s303, blaster). Each row of the step
+  Synthesis engine for the sequencer — 7 voices ported from synthesis_runtime
+  (kick, snare, clap, hat, cymbal, perc, blaster). Each row of the step
   grid triggers one of these through Instruments.trigger(row, time).
 */
 const Instruments = (() => {
@@ -9,7 +9,7 @@ const Instruments = (() => {
   let masterDrive, masterComp, masterFilter, masterMute;
   const channelNodes = {};
 
-  const ROW_INSTRUMENTS = ["kick", "snare", "clap", "hat", "cymbal", "perc", "s303", "blaster"];
+  const ROW_INSTRUMENTS = ["kick", "snare", "clap", "hat", "cymbal", "perc", "blaster"];
 
   /* per-channel routing: send1 = how much goes to the delay bus, in parallel with dry */
   // all channel volumes scaled to 60% of what they were
@@ -20,7 +20,6 @@ const Instruments = (() => {
     hat:     { send1: 0,   volume: 1.02 },
     cymbal:  { send1: 0,   volume: 0.3 },  // no longer sent to the delay
     perc:    { send1: 0.8, volume: 0.6 },
-    s303:    { send1: 0.1, volume: 0.4 },  // 10% into the delay
     blaster: { send1: 0.8, volume: 1.2 },  // mostly routed into the delay
   };
 
@@ -114,19 +113,22 @@ const Instruments = (() => {
     masterMute.gain.linearRampToValueAtTime(muted ? 0 : 1, now + 0.01);
   }
 
-  function createChannel(insert) {
+  // per-instrument volume fader: percent (0-100) is scaled against that
+  // channel's current configured volume, i.e. 100% = channels[name].volume
+  function setChannelVolume(name, percent) {
+    const node = channelNodes[name];
+    if (!node) return;
+    const t = Math.min(1, Math.max(0, percent / 100));
+    node.volume.gain.value = channels[name].volume * t;
+  }
+
+  function createChannel() {
     const inputGain = audioContext.createGain();
     const send1 = audioContext.createGain();
     const volume = audioContext.createGain();
 
-    // optional per-channel processor (e.g. a compressor) sits between the
-    // input and the send/volume taps, so it's applied before this channel
-    // joins the common mix rather than after
-    const tap = insert || inputGain;
-    if (insert) inputGain.connect(insert);
-
-    tap.connect(send1);
-    tap.connect(volume);
+    inputGain.connect(send1);
+    inputGain.connect(volume);
     volume.connect(masterBus);
     send1.connect(fx1Send);
 
@@ -163,20 +165,9 @@ const Instruments = (() => {
     fx1Send = audioContext.createGain();
 
     for (const name of ROW_INSTRUMENTS) {
-      let insert;
-      if (name === "s303") {
-        // glue compressor on the 303 alone, before it joins the master mix
-        insert = audioContext.createDynamicsCompressor();
-        insert.threshold.value = -18;
-        insert.knee.value = 12;
-        insert.ratio.value = 4;
-        insert.attack.value = 0.003;
-        insert.release.value = 0.15;
-      }
-
-      const node = createChannel(insert);
+      const node = createChannel();
       node.send1.gain.value = channels[name].send1;
-      node.volume.gain.value = channels[name].volume;
+      node.volume.gain.value = channels[name].volume * 0.9; // 90% of current volume by default
       channelNodes[name] = node;
     }
 
@@ -214,7 +205,7 @@ const Instruments = (() => {
   // ============================
   // KICK — medium length, very little drive
   // ============================
-  const kickDur = 0.22;
+  const kickDur = 0.32;
   const kickDriveMix = 0.04;
   const kickCurve = makeCurve(26); // drive amount is fixed, so the curve is built once and reused
 
@@ -225,8 +216,8 @@ const Instruments = (() => {
     const gain = audioContext.createGain();
     osc.type = "sine";
 
-    osc.frequency.setValueAtTime(106, now);
-    osc.frequency.exponentialRampToValueAtTime(35, now + kickDur);
+    osc.frequency.setValueAtTime(98, now);
+    osc.frequency.exponentialRampToValueAtTime(28, now + kickDur);
 
     gain.gain.setValueAtTime(1, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + kickDur * 2);
@@ -448,100 +439,6 @@ const Instruments = (() => {
   }
 
   // ============================
-  // 303 — every parameter modulated by its own very slow, independent LFO
-  // ============================
-  const s303LFO = {
-    mix:       { rate: 0.011, center: 0.5,  depth: 0.45 },
-    cutoff:    { rate: 0.023, center: 260,  depth: 220  },
-    envDepth:  { rate: 0.017, center: 5000, depth: 3000 },
-    decay:     { rate: 0.031, center: 0.25, depth: 0.15 },
-    attack:    { rate: 0.019, center: 0.02, depth: 0.018 },
-    resonance: { rate: 0.013, center: 26,   depth: 16   }, // higher Q, more squelch
-    drive:     { rate: 0.027, center: 36,   depth: 28   }, // wider drive swing for real acid grit
-  };
-  const s303LFOStart = performance.now() / 1000;
-
-  function lfoValue(def) {
-    const t = performance.now() / 1000 - s303LFOStart;
-    return def.center + Math.sin(t * def.rate * 2 * Math.PI) * def.depth;
-  }
-
-  function get303Params() {
-    return {
-      mix: Math.min(1, Math.max(0, lfoValue(s303LFO.mix))),
-      cutoff: Math.max(40, lfoValue(s303LFO.cutoff)),
-      envDepth: Math.max(200, lfoValue(s303LFO.envDepth)),
-      decay: Math.max(0.05, lfoValue(s303LFO.decay)),
-      attack: Math.max(0.001, lfoValue(s303LFO.attack)),
-      resonance: Math.max(1, lfoValue(s303LFO.resonance)),
-      drive: Math.max(4, lfoValue(s303LFO.drive)),
-    };
-  }
-
-  function play303(noteFreq, time) {
-    const now = time ?? audioContext.currentTime;
-    const p = get303Params();
-
-    const oscTri = audioContext.createOscillator();
-    const oscSq = audioContext.createOscillator();
-    oscTri.type = "triangle";
-    oscSq.type = "square";
-    oscTri.frequency.setValueAtTime(noteFreq, now);
-    oscSq.frequency.setValueAtTime(noteFreq, now);
-
-    const oscMix = audioContext.createGain();
-    const triGain = audioContext.createGain();
-    const sqGain = audioContext.createGain();
-    triGain.gain.value = (1 - p.mix) * 0.019;
-    sqGain.gain.value = p.mix * 0.019;
-
-    oscTri.connect(triGain);
-    oscSq.connect(sqGain);
-    triGain.connect(oscMix);
-    sqGain.connect(oscMix);
-
-    const filter = audioContext.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.Q.value = p.resonance;
-    filter.frequency.setValueAtTime(p.cutoff, now);
-    filter.frequency.linearRampToValueAtTime(p.cutoff + p.envDepth, now + p.attack);
-    filter.frequency.exponentialRampToValueAtTime(p.cutoff + 80, now + p.decay);
-
-    const shaper = audioContext.createWaveShaper();
-    shaper.curve = makeCurve(p.drive); // drive is LFO-modulated, so this has to be rebuilt per hit
-
-    const postFilter = audioContext.createBiquadFilter();
-    postFilter.type = "lowpass";
-    postFilter.frequency.value = 9000;
-
-    const finalFilter = audioContext.createBiquadFilter();
-    finalFilter.type = "lowpass";
-    finalFilter.frequency.value = 1200;
-
-    const hpf = audioContext.createBiquadFilter();
-    hpf.type = "highpass";
-    hpf.frequency.value = 50;
-    hpf.Q.value = 1;
-
-    const amp = audioContext.createGain();
-    amp.gain.setValueAtTime(0.9, now);
-    amp.gain.exponentialRampToValueAtTime(0.001, now + p.decay + 0.1);
-
-    oscMix.connect(shaper);
-    shaper.connect(filter);
-    filter.connect(postFilter);
-    postFilter.connect(finalFilter);
-    finalFilter.connect(hpf);
-    hpf.connect(amp);
-    amp.connect(channelNodes.s303.inputGain);
-
-    oscTri.start(now);
-    oscSq.start(now);
-    oscTri.stop(now + p.decay + 0.3);
-    oscSq.stop(now + p.decay + 0.3);
-  }
-
-  // ============================
   // BLASTER — routed mostly into the delay send (see channels.blaster.send1)
   // ============================
   function playBlaster(noteFreq, time) {
@@ -571,7 +468,7 @@ const Instruments = (() => {
   }
 
   // ============================
-  // DISPATCH — row index (0-7) -> voice, fixed pitch per melodic voice since
+  // DISPATCH — row index (0-6) -> voice, fixed pitch per melodic voice since
   // the grid is on/off only (no per-step pitch data)
   // ============================
   function trigger(row, time) {
@@ -582,8 +479,7 @@ const Instruments = (() => {
       case 3: return playHat(time);
       case 4: return playCymbal(time);
       case 5: return playMidPerc(480, time);
-      case 6: return play303(41.20, time); // E1
-      case 7: return playBlaster(222, time);
+      case 6: return playBlaster(222, time);
     }
   }
 
@@ -594,6 +490,7 @@ const Instruments = (() => {
     setMasterDrive,
     setMasterFilter,
     setMasterMute,
+    setChannelVolume,
     get audioContext() { return audioContext; },
     ROW_INSTRUMENTS,
   };
