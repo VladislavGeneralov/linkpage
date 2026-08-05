@@ -444,8 +444,10 @@ a:hover {
   }
 
   .seq-label {
-    /* cancels the panel's 90deg rotation so the label reads horizontally */
-    transform: rotate(-90deg);
+    /* cancels the panel's 90deg rotation so the label reads horizontally;
+       translateY here (pre-rotation) ends up as a couple px nudge to the
+       right on screen once rotated */
+    transform: rotate(-90deg) translateY(2px);
   }
 
   .seq-vol {
