@@ -447,7 +447,7 @@ a:hover {
     /* cancels the panel's 90deg rotation so the label reads horizontally;
        translateY here (pre-rotation) ends up as a horizontal nudge on
        screen once rotated — negative = left */
-    transform: rotate(-90deg) translateY(-5px);
+    transform: rotate(-90deg) translateY(-11px);
   }
 
   .seq-vol {
