@@ -19,7 +19,7 @@ const Instruments = (() => {
     clap:    { send1: 0,   volume: 0.6 },
     hat:     { send1: 0,   volume: 1.02 },
     cymbal:  { send1: 0,   volume: 0.3 },  // no longer sent to the delay
-    perc:    { send1: 0.8, volume: 0.6 },
+    perc:    { send1: 0.8, volume: 0.8 },
     blaster: { send1: 0.8, volume: 1.2 },  // mostly routed into the delay
   };
 
@@ -205,7 +205,7 @@ const Instruments = (() => {
   // ============================
   // KICK — medium length, very little drive
   // ============================
-  const kickDur = 0.32;
+  const kickDur = 0.4;
   const kickDriveMix = 0.04;
   const kickCurve = makeCurve(26); // drive amount is fixed, so the curve is built once and reused
 

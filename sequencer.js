@@ -278,9 +278,11 @@ filterResetBtn.addEventListener("click", () => {
 
 // ============================
 // TOP BOLT — if the sequencer isn't playing, clicking the bolt previews
-// step 0 of the pattern once (whatever's programmed there, muted rows excluded)
+// step 0 of the pattern once (whatever's programmed there, muted rows excluded).
+// Listener sits on the <img> itself (not the wrapping .top-bolt div, which is
+// a full-width row) so the clickable area matches the visible icon exactly.
 // ============================
-const topBolt = document.querySelector(".top-bolt");
+const topBolt = document.querySelector(".top-bolt img");
 
 if (topBolt) {
   topBolt.addEventListener("click", () => {
