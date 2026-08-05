@@ -113,6 +113,62 @@ const Instruments = (() => {
     masterMute.gain.linearRampToValueAtTime(muted ? 0 : 1, now + 0.01);
   }
 
+  // ============================
+  // BOLT NOISE — white noise (highpass 320 / lowpass 2600), separate from
+  // the sequencer's own instruments. Runs for as long as a bolt is held
+  // down, only while the sequencer is playing. 0.16 dry, 0.16 to delay.
+  // ============================
+  let boltNoiseBuffer = null;
+  let boltNoiseSource = null;
+
+  function getBoltNoiseBuffer() {
+    if (!boltNoiseBuffer) {
+      const dur = 2; // seconds, looped for however long the bolt is held
+      boltNoiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate * dur, audioContext.sampleRate);
+      const data = boltNoiseBuffer.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    }
+    return boltNoiseBuffer;
+  }
+
+  function startBoltNoise() {
+    if (boltNoiseSource) return; // already sounding
+
+    const source = audioContext.createBufferSource();
+    source.buffer = getBoltNoiseBuffer();
+    source.loop = true;
+
+    const hpf = audioContext.createBiquadFilter();
+    hpf.type = "highpass";
+    hpf.frequency.value = 320;
+
+    const lpf = audioContext.createBiquadFilter();
+    lpf.type = "lowpass";
+    lpf.frequency.value = 2600;
+
+    const dryGain = audioContext.createGain();
+    dryGain.gain.value = 0.16;
+
+    const sendGain = audioContext.createGain();
+    sendGain.gain.value = 0.16;
+
+    source.connect(hpf);
+    hpf.connect(lpf);
+    lpf.connect(dryGain);
+    lpf.connect(sendGain);
+    dryGain.connect(masterBus);
+    sendGain.connect(fx1Send);
+
+    source.start();
+    boltNoiseSource = source;
+  }
+
+  function stopBoltNoise() {
+    if (!boltNoiseSource) return;
+    try { boltNoiseSource.stop(); } catch (e) {}
+    boltNoiseSource = null;
+  }
+
   // per-instrument volume fader: percent (0-100) is scaled against that
   // channel's current configured volume, i.e. 100% = channels[name].volume
   function setChannelVolume(name, percent) {
@@ -491,6 +547,8 @@ const Instruments = (() => {
     setMasterFilter,
     setMasterMute,
     setChannelVolume,
+    startBoltNoise,
+    stopBoltNoise,
     get audioContext() { return audioContext; },
     ROW_INSTRUMENTS,
   };

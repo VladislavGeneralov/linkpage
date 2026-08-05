@@ -300,15 +300,18 @@ filterResetBtn.addEventListener("click", () => {
 });
 
 // ============================
-// TOP BOLT — if the sequencer isn't playing, clicking the bolt previews
-// step 0 of the pattern once (whatever's programmed there, muted rows excluded).
-// Listener sits on the <img> itself (not the wrapping .top-bolt div, which is
-// a full-width row) so the clickable area matches the visible icon exactly.
+// BOLTS (top + bottom) — both behave identically:
+// 1) if the sequencer isn't playing, a click previews step 0 of the pattern
+//    once (whatever's programmed there, muted rows excluded)
+// 2) while the sequencer IS playing, holding one down (mouse or touch)
+//    sounds a white noise source for as long as it's held
+// Listeners sit on the <img> itself (not the wrapping .top-bolt div, which
+// is a full-width row) so the clickable area matches the visible icon.
 // ============================
-const topBolt = document.querySelector(".top-bolt img");
+const boltImgs = document.querySelectorAll(".top-bolt img");
 
-if (topBolt) {
-  topBolt.addEventListener("click", () => {
+boltImgs.forEach(bolt => {
+  bolt.addEventListener("click", () => {
     if (isPlaying) return;
 
     audioCtx = Instruments.init();
@@ -319,7 +322,25 @@ if (topBolt) {
       if (pattern[r][0] && !muted[r]) Instruments.trigger(r, now);
     }
   });
-}
+
+  bolt.addEventListener("mousedown", () => {
+    if (!isPlaying) return;
+    audioCtx = Instruments.init();
+    Instruments.startBoltNoise();
+  });
+
+  bolt.addEventListener("touchstart", () => {
+    if (!isPlaying) return;
+    audioCtx = Instruments.init();
+    Instruments.startBoltNoise();
+  }, { passive: true });
+});
+
+// released anywhere on the page, not just on the bolt itself, so a drag-off
+// doesn't leave the noise stuck on
+window.addEventListener("mouseup", () => Instruments.stopBoltNoise());
+window.addEventListener("touchend", () => Instruments.stopBoltNoise());
+window.addEventListener("touchcancel", () => Instruments.stopBoltNoise());
 
 // ============================
 // ROTATED LAYOUT (mobile only) — .seq-panel is rotated 90deg via CSS.

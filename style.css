@@ -16,7 +16,7 @@
 
 body {
   margin: 0;
-  padding: 28px 0;
+  padding: 28px 0 56px; /* extra room at the bottom so mobile doesn't hit the screen edge */
   background: #0E0F12;
   color: #ffffff;
 
@@ -42,6 +42,11 @@ body {
   box-sizing: border-box;
   margin: 0 auto;
   padding: 0 20px;
+}
+
+.bottom-bolt {
+  margin-top: 40px; /* extra room before it, on top of body's usual gap */
+  margin-bottom: 20px; /* a bit of extra room after it, on top of body's gap */
 }
 
 .top-bolt img {
