@@ -98,6 +98,10 @@ a:hover {
   margin-top: 40px; /* extra breathing room before the sequencer, on top of the usual gap */
 }
 
+.seq-intro {
+  margin-bottom: 12px;
+}
+
 .seq-panel {
   width: fit-content;
   margin: 0;
@@ -111,7 +115,7 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 8px 10px 20px;
   border-bottom: 1px solid #26272c;
 }
 
@@ -140,7 +144,8 @@ a:hover {
   border-color: #C28A2E;
 }
 
-.seq-play-btn.is-playing {
+.seq-play-btn.is-playing,
+.seq-play-btn.is-muted {
   color: #C28A2E;
   border-color: #C28A2E;
 }
@@ -161,6 +166,32 @@ a:hover {
   font-size: 9px;
   color: #6d6d6d;
   width: 20px;
+}
+
+.seq-fader-track {
+  position: relative;
+  display: inline-flex;
+}
+
+.seq-filter-reset {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 5px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #3a3a3a;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.seq-filter-reset:hover {
+  background: #C28A2E;
+  border-color: #C28A2E;
 }
 
 .seq-fader input[type="range"] {

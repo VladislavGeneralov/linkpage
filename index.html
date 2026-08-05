@@ -58,7 +58,7 @@
 
 <!-- SEQUENCER -->
 <section class="module sequencer-module">
-  <p>play the sequencer</p>
+  <p class="seq-intro">play the sequencer :)</p>
 
   <div class="seq-panel">
     <div class="seq-topbar">
@@ -75,6 +75,17 @@
         <input id="seq-drive" type="range" min="0" max="100" step="1" value="16" />
         <span id="seq-drive-value" class="seq-fader-value">16</span>
       </div>
+
+      <div class="seq-fader">
+        <label for="seq-filter">filter</label>
+        <span class="seq-fader-track">
+          <input id="seq-filter" type="range" min="0" max="100" step="1" value="50" />
+          <button id="seq-filter-reset" class="seq-filter-reset" type="button" aria-label="reset filter"></button>
+        </span>
+        <span id="seq-filter-value" class="seq-fader-value">50</span>
+      </div>
+
+      <button id="seq-mute" class="seq-play-btn" type="button" aria-label="mute"></button>
 
       <!-- more transport controls (toggles) land here -->
     </div>

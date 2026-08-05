@@ -10,6 +10,20 @@ const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l16
 const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14"/></svg>';
 playBtn.innerHTML = PLAY_ICON;
 
+const muteBtn = document.getElementById("seq-mute");
+const SPEAKER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
+const MUTED_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 5V4L8 9H4z"/><path d="M16 9l6 6"/><path d="M22 9l-6 6"/></svg>';
+muteBtn.innerHTML = SPEAKER_ICON;
+
+let masterMuted = false;
+muteBtn.addEventListener("click", () => {
+  masterMuted = !masterMuted;
+  muteBtn.innerHTML = masterMuted ? MUTED_ICON : SPEAKER_ICON;
+  muteBtn.setAttribute("aria-label", masterMuted ? "unmute" : "mute");
+  muteBtn.classList.toggle("is-muted", masterMuted);
+  Instruments.setMasterMute(masterMuted);
+});
+
 /* default pattern, one row per ROW_LABELS entry, active step indices (0-15) */
 const DEFAULT_PATTERN = [
   [0, 6, 10],                                     // kik
@@ -147,6 +161,8 @@ function play() {
   audioCtx = Instruments.init();
   Instruments.setTempo(TEMPO);
   Instruments.setMasterDrive(Number(driveSlider.value));
+  Instruments.setMasterFilter(Number(filterSlider.value));
+  Instruments.setMasterMute(masterMuted);
 
   isPlaying = true;
   currentStep = 0;
@@ -195,4 +211,37 @@ driveSlider.addEventListener("input", () => {
   const value = Number(driveSlider.value);
   driveValue.textContent = value;
   Instruments.setMasterDrive(value);
+});
+
+const filterSlider = document.getElementById("seq-filter");
+const filterValue = document.getElementById("seq-filter-value");
+
+filterSlider.addEventListener("input", () => {
+  const value = Number(filterSlider.value);
+  filterValue.textContent = value;
+  Instruments.setMasterFilter(value);
+});
+
+const filterResetBtn = document.getElementById("seq-filter-reset");
+
+filterResetBtn.addEventListener("click", () => {
+  const start = Number(filterSlider.value);
+  const target = 50;
+  if (start === target) return;
+
+  const duration = 100; // ms
+  const startTime = performance.now();
+
+  function tick(now) {
+    const t = Math.min(1, (now - startTime) / duration);
+    const value = start + (target - start) * t;
+
+    filterSlider.value = value;
+    filterValue.textContent = Math.round(value);
+    Instruments.setMasterFilter(value);
+
+    if (t < 1) requestAnimationFrame(tick);
+  }
+
+  requestAnimationFrame(tick);
 });

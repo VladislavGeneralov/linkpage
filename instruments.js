@@ -6,7 +6,7 @@
 const Instruments = (() => {
   let audioContext = null;
   let masterBus, fx1Send, delayNode, delayFeedback, delayHPF;
-  let masterDrive, masterComp;
+  let masterDrive, masterComp, masterFilter, masterMute;
   const channelNodes = {};
 
   const ROW_INSTRUMENTS = ["kick", "snare", "clap", "hat", "cymbal", "perc", "s303", "blaster"];
@@ -70,6 +70,49 @@ const Instruments = (() => {
     masterComp.gain.value = Math.pow(10, db / 20);
   }
 
+  // ============================
+  // MASTER FILTER — one knob, two jobs: left half sweeps a lowpass down to
+  // 50Hz, right half sweeps a highpass up to 4kHz. Center (50) = no cut.
+  // ============================
+  const MASTER_FILTER_Q = 2.2;
+  const MASTER_FILTER_LOW_CUTOFF = 50;     // Hz at the far left (heaviest lowpass cut)
+  const MASTER_FILTER_HIGH_CUTOFF = 4000;  // Hz at the far right (heaviest highpass cut)
+  const MASTER_FILTER_NEUTRAL_LOW = 20000; // lowpass freq at center -> effectively no cut
+  const MASTER_FILTER_NEUTRAL_HIGH = 20;   // highpass freq at center -> effectively no cut
+
+  function setMasterFilter(value) {
+    // value: 0-100 from the UI fader, 50 = bypass
+    if (!masterFilter) return;
+
+    const v = Math.min(100, Math.max(0, value));
+    masterFilter.Q.value = MASTER_FILTER_Q;
+
+    if (v <= 50) {
+      const t = (50 - v) / 50; // 0 at center -> 1 at full left
+      masterFilter.type = "lowpass";
+      // exponential sweep (frequency perception is logarithmic, not linear)
+      masterFilter.frequency.value =
+        MASTER_FILTER_NEUTRAL_LOW * Math.pow(MASTER_FILTER_LOW_CUTOFF / MASTER_FILTER_NEUTRAL_LOW, t);
+    } else {
+      const t = (v - 50) / 50; // 0 at center -> 1 at full right
+      masterFilter.type = "highpass";
+      masterFilter.frequency.value =
+        MASTER_FILTER_NEUTRAL_HIGH * Math.pow(MASTER_FILTER_HIGH_CUTOFF / MASTER_FILTER_NEUTRAL_HIGH, t);
+    }
+  }
+
+  // ============================
+  // MASTER MUTE
+  // ============================
+  function setMasterMute(muted) {
+    if (!masterMute) return;
+    const now = audioContext.currentTime;
+    masterMute.gain.cancelScheduledValues(now);
+    masterMute.gain.setValueAtTime(masterMute.gain.value, now);
+    // short ramp instead of an instant jump, so toggling doesn't click/pop
+    masterMute.gain.linearRampToValueAtTime(muted ? 0 : 1, now + 0.01);
+  }
+
   function createChannel(insert) {
     const inputGain = audioContext.createGain();
     const send1 = audioContext.createGain();
@@ -100,13 +143,21 @@ const Instruments = (() => {
     masterBus = audioContext.createGain();
     masterBus.gain.value = 1;
 
+    masterFilter = audioContext.createBiquadFilter();
+    setMasterFilter(50); // centered = no cut
+
     masterDrive = audioContext.createWaveShaper();
     masterComp = audioContext.createGain();
     setMasterDrive(0); // clean by default
 
-    masterBus.connect(masterDrive);
+    masterMute = audioContext.createGain();
+    masterMute.gain.value = 1; // unmuted by default
+
+    masterBus.connect(masterFilter);
+    masterFilter.connect(masterDrive);
     masterDrive.connect(masterComp);
-    masterComp.connect(audioContext.destination);
+    masterComp.connect(masterMute);
+    masterMute.connect(audioContext.destination);
 
     fx1Send = audioContext.createGain();
 
@@ -540,6 +591,8 @@ const Instruments = (() => {
     trigger,
     setTempo,
     setMasterDrive,
+    setMasterFilter,
+    setMasterMute,
     get audioContext() { return audioContext; },
     ROW_INSTRUMENTS,
   };
