@@ -362,6 +362,13 @@ if (IS_MOBILE) {
 
   function measureRotatedPanel() {
     if (!rotateWrap || !seqPanelEl) return;
+    // clear any previously-set size first: .seq-panel is `width: fit-content`,
+    // which clamps to the wrap's current width if it's smaller than the
+    // panel's natural content size — so measuring against a wrap that still
+    // holds an earlier (possibly too-small) value just reconfirms that same
+    // wrong number forever instead of correcting it
+    rotateWrap.style.width = "auto";
+    rotateWrap.style.height = "auto";
     const rect = seqPanelEl.getBoundingClientRect();
     rotateWrap.style.width = rect.width + "px";
     rotateWrap.style.height = rect.height + "px";
