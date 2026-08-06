@@ -445,12 +445,9 @@ a:hover {
 
   .seq-label {
     /* cancels the panel's 90deg rotation so the label reads horizontally.
-       Pre-rotation translateX -> screen-vertical nudge (down here, capped
-       at -20px: kick sits close to .seq-panel's overflow:hidden edge and
-       clips past ~-22/-24px). Pre-rotation translateY -> screen-horizontal
-       nudge (right here): measured labels sitting a consistent ~15px left
-       of their own grid column across all 7, so +15px lines them back up. */
-    transform: rotate(-90deg) translate(-8px, 0px);
+       First translate() value is a screen-horizontal nudge, tuned directly
+       against user feedback (not self-measured). */
+    transform: rotate(-90deg) translate(0px, 0px);
   }
 
   .seq-vol {
