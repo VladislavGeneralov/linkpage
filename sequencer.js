@@ -68,12 +68,16 @@ const volSliders = [];
    — pattern/mute/Instruments mapping stays exactly as before. */
 const BUILD_ORDER = IS_MOBILE ? [6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6];
 
-/* build the grid: one label + 16 step buttons per row */
+/* build the grid: one label + 16 step buttons per row (desktop only —
+   mobile keeps instrument names out of the rotated grid entirely, see
+   #seq-legend below, so they never need a counter-rotation/offset hack) */
 for (const r of BUILD_ORDER) {
-  const label = document.createElement("div");
-  label.className = "seq-label";
-  label.textContent = ROW_LABELS[r];
-  grid.appendChild(label);
+  if (!IS_MOBILE) {
+    const label = document.createElement("div");
+    label.className = "seq-label";
+    label.textContent = ROW_LABELS[r];
+    grid.appendChild(label);
+  }
 
   for (let s = 0; s < STEPS; s++) {
     const cell = document.createElement("button");
@@ -359,12 +363,43 @@ window.addEventListener("touchcancel", () => Instruments.stopBoltNoise());
 if (IS_MOBILE) {
   const rotateWrap = document.querySelector(".seq-rotate-wrap");
   const seqPanelEl = document.querySelector(".seq-panel");
+  const legendEl = document.getElementById("seq-legend");
+
+  // instrument-name legend: built once, in the same left-to-right order the
+  // rotated columns actually appear on screen (which is ROW_LABELS' own
+  // order — kick..fx — since that already matches BUILD_ORDER's result)
+  if (legendEl) {
+    for (let r = 0; r < ROWS; r++) {
+      const span = document.createElement("span");
+      span.textContent = ROW_LABELS[r];
+      legendEl.appendChild(span);
+    }
+  }
 
   function measureRotatedPanel() {
     if (!rotateWrap || !seqPanelEl) return;
+
+    // reserve room above the panel for the legend, inside the same frame
+    // (the frame itself now lives on .seq-rotate-wrap, see style.css), so
+    // the border/background wraps both instead of cutting through the text
+    const gap = 6;
+    const topPad = 15; // space between the frame's top border and the legend text
+    const legendHeight = legendEl ? legendEl.offsetHeight : 0;
+    const marginTop = legendEl ? legendHeight + gap + topPad : 0;
+    seqPanelEl.style.marginTop = marginTop + "px";
+
     const rect = seqPanelEl.getBoundingClientRect();
     rotateWrap.style.width = rect.width + "px";
-    rotateWrap.style.height = rect.height + "px";
+    rotateWrap.style.height = (rect.height + marginTop) + "px";
+
+    // position the legend from real measured coordinates of the grid it
+    // labels, instead of a guessed transform offset
+    if (legendEl) {
+      const wrapRect = rotateWrap.getBoundingClientRect();
+      const gridRect = grid.getBoundingClientRect();
+      legendEl.style.left = (gridRect.left - wrapRect.left - 16) + "px";
+      legendEl.style.top = topPad + "px";
+    }
   }
 
   measureRotatedPanel();

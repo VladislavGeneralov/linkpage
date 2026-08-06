@@ -298,6 +298,14 @@ a:hover {
   letter-spacing: 0.5px;
 }
 
+/* mobile-only instrument-name legend, lives outside the rotated .seq-panel
+   entirely so it never needs a counter-rotation. Positioned by sequencer.js
+   against the grid's actual measured coordinates, not a guessed offset. */
+.seq-legend {
+  display: none;
+  position: absolute;
+}
+
 .seq-step {
   aspect-ratio: 1 / 1;
   background: #17181c;
@@ -396,7 +404,23 @@ a:hover {
    sequencer.js via the same breakpoint (matchMedia("(max-width: 600px)")).
    ============================ */
 @media (max-width: 600px) {
+  /* the visual frame (border/background) moves to the wrap, since it now
+     needs to contain the legend too, not just the rotated panel — sized/
+     positioned by sequencer.js so the panel sits below the legend inside
+     one shared frame */
+  .seq-rotate-wrap {
+    background: #101114;
+    border: 1px solid #26272c;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-top: -8px;
+  }
+
   .seq-panel {
+    background: none;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
     transform-origin: top left;
     transform: rotate(90deg) translateY(-100%);
     /* topbar/grid stack as a flex column so their visual order can be
@@ -443,17 +467,30 @@ a:hover {
     transform: rotate(180deg);
   }
 
-  .seq-label {
-    /* cancels the panel's 90deg rotation so the label reads horizontally.
-       First translate() value is a screen-horizontal nudge, tuned directly
-       against user feedback (not self-measured). */
-    transform: rotate(-90deg) translate(0px, 0px);
-  }
-
   .seq-vol {
     /* same compensation as the topbar faders: cancels the panel's rotation
        so up = louder, down = quieter */
     transform: rotate(180deg);
+  }
+
+  /* no label column in the rotated grid on mobile — names live in
+     #seq-legend instead (see below), which needs no counter-rotation */
+  .seq-grid {
+    grid-template-columns: repeat(16, 20px) 24px 50px;
+  }
+
+  .seq-legend {
+    display: grid;
+    grid-template-columns: repeat(7, 20px);
+    gap: 3px;
+    zoom: 1.2; /* matches .seq-panel's zoom so the pitch lines up exactly */
+  }
+
+  .seq-legend span {
+    font-size: 9px;
+    color: #6d6d6d;
+    letter-spacing: 0.5px;
+    text-align: center;
   }
 }
 
