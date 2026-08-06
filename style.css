@@ -149,25 +149,21 @@ a:hover {
   margin: 0;
   background: #101114;
   border: 1px solid #26272c;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
-  /* 10% bigger everywhere — `zoom` (unlike transform:scale) actually
-     resizes the box for layout purposes too, so nothing needs to reflow
-     manually, and it composes cleanly with the mobile rotation below */
-  zoom: 1.2;
 }
 
 .seq-topbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px 20px;
+  gap: 13px;
+  padding: 10px 13px 26px;
   border-bottom: 1px solid #26272c;
 }
 
 .seq-play-btn {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -175,14 +171,14 @@ a:hover {
   color: #b3b3b3;
   background: transparent;
   border: 1px solid #3a3a3a;
-  border-radius: 3px;
+  border-radius: 4px;
   cursor: pointer;
   transition: color 0.2s ease, border-color 0.2s ease;
 }
 
 .seq-play-btn svg {
-  width: 11px;
-  height: 11px;
+  width: 14px;
+  height: 14px;
 }
 
 .seq-play-btn:hover {
@@ -199,19 +195,19 @@ a:hover {
 .seq-fader {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .seq-fader label {
-  font-size: 9px;
+  font-size: 12px;
   color: #6d6d6d;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.65px;
 }
 
 .seq-fader-value {
-  font-size: 9px;
+  font-size: 12px;
   color: #6d6d6d;
-  width: 20px;
+  width: 26px;
   text-align: center;
 }
 
@@ -225,9 +221,9 @@ a:hover {
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
-  margin-top: 5px;
-  width: 8px;
-  height: 8px;
+  margin-top: 7px;
+  width: 10px;
+  height: 10px;
   padding: 0;
   border-radius: 50%;
   border: 1px solid #3a3a3a;
@@ -244,17 +240,17 @@ a:hover {
 .seq-fader input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  width: 70px;
-  height: 8px; /* rectangle, slightly narrower than the 10px thumb */
+  width: 91px;
+  height: 10px; /* rectangle, slightly narrower than the 13px thumb */
   background: #3a3a3a;
-  border-radius: 2px;
+  border-radius: 3px;
   cursor: pointer;
 }
 
 .seq-fader input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 10px;
-  height: 10px;
+  width: 13px;
+  height: 13px;
   border-radius: 50%;
   background: #b3b3b3;
   transition: background 0.15s ease;
@@ -265,8 +261,8 @@ a:hover {
 }
 
 .seq-fader input[type="range"]::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
+  width: 13px;
+  height: 13px;
   border: none;
   border-radius: 50%;
   background: #b3b3b3;
@@ -279,30 +275,30 @@ a:hover {
 
 .seq-grid-wrap {
   overflow-x: auto;
-  padding: 10px;
+  padding: 13px;
 }
 
 .seq-grid {
   display: inline-grid;
-  grid-template-columns: 34px repeat(16, 20px) 24px 50px;
-  gap: 3px;
+  grid-template-columns: 44px repeat(16, 26px) 31px 65px;
+  gap: 4px;
 }
 
 .seq-label {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  padding-right: 4px;
-  font-size: 9px;
+  padding-right: 5px;
+  font-size: 12px;
   color: #6d6d6d;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.65px;
 }
 
 .seq-step {
   aspect-ratio: 1 / 1;
   background: #17181c;
   border: 1px solid #26272c;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 0;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
@@ -317,8 +313,8 @@ a:hover {
 }
 
 .seq-mute {
-  width: 13px;
-  height: 13px;
+  width: 17px;
+  height: 17px;
   aspect-ratio: 1 / 1;
   align-self: center;
   justify-self: center;
@@ -344,17 +340,17 @@ a:hover {
   appearance: none;
   align-self: center;
   justify-self: start;
-  width: 46px;
-  height: 6px; /* rectangle, slightly narrower than the 8px thumb */
+  width: 60px;
+  height: 8px; /* rectangle, slightly narrower than the 10px thumb */
   background: #3a3a3a;
-  border-radius: 2px;
+  border-radius: 3px;
   cursor: pointer;
 }
 
 .seq-vol::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #b3b3b3;
   transition: background 0.15s ease;
@@ -365,8 +361,8 @@ a:hover {
 }
 
 .seq-vol::-moz-range-thumb {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border: none;
   border-radius: 50%;
   background: #b3b3b3;
@@ -383,8 +379,8 @@ a:hover {
 }
 
 .seq-step.is-playhead {
-  outline: 1.5px solid rgba(120, 200, 255, 0.85);
-  outline-offset: -1.5px;
+  outline: 2px solid rgba(120, 200, 255, 0.85);
+  outline-offset: -2px;
 }
 
 /* ============================
@@ -447,7 +443,7 @@ a:hover {
     /* cancels the panel's 90deg rotation so the label reads horizontally;
        translateY here (pre-rotation) ends up as a horizontal nudge on
        screen once rotated — negative = left */
-    transform: rotate(-90deg) translateY(-11px);
+    transform: rotate(-90deg) translateY(-14px);
     /* mobile-only: align by the label's own bottom edge instead of
        centering, so it lines up with the play button's bottom edge */
     align-items: flex-end;
