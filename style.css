@@ -156,6 +156,14 @@ a:hover {
   padding: 10px 13px 26px;
 }
 
+/* pushed to the topbar's own right edge, which sits at the same inset
+   (13px padding) from .seq-panel's edge as .seq-grid's last column does
+   via .seq-grid-wrap's matching 13px padding — so the two line up by
+   construction, not by coincidentally-matching content widths */
+#seq-mute {
+  margin-left: auto;
+}
+
 .seq-play-btn {
   width: 36px;
   height: 36px;
