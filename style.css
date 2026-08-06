@@ -444,13 +444,12 @@ a:hover {
   }
 
   .seq-label {
-    /* cancels the panel's 90deg rotation so the label reads horizontally;
-       translateY here (pre-rotation) ends up as a horizontal nudge on
-       screen once rotated — negative = left */
-    transform: rotate(-90deg) translateY(-11px);
-    /* mobile-only: align by the label's own bottom edge instead of
-       centering, so it lines up with the play button's bottom edge */
-    align-items: flex-end;
+    /* cancels the panel's 90deg rotation so the label reads horizontally.
+       Pre-rotation translateY -> screen-horizontal nudge (negative = left);
+       pre-rotation translateX -> screen-vertical nudge (negative = down),
+       used here to drop the label row down closer to the play button's
+       bottom edge. Both are estimates — nudge further if still off. */
+    transform: rotate(-90deg) translate(-35px, -11px);
   }
 
   .seq-vol {
