@@ -445,11 +445,12 @@ a:hover {
 
   .seq-label {
     /* cancels the panel's 90deg rotation so the label reads horizontally.
-       Pre-rotation translateY -> screen-horizontal nudge (negative = left);
-       pre-rotation translateX -> screen-vertical nudge (negative = down),
+       Pre-rotation translateX -> screen-vertical nudge (negative = down),
        used here to drop the label row down closer to the play button's
-       bottom edge. Both are estimates — nudge further if still off. */
-    transform: rotate(-90deg) translate(-35px, -11px);
+       bottom edge. The horizontal component was removed — combined with
+       this it pushed the leftmost label (kick) outside the panel's
+       overflow:hidden and made it disappear entirely. */
+    transform: rotate(-90deg) translateX(-35px);
   }
 
   .seq-vol {
