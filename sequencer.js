@@ -68,13 +68,8 @@ const volSliders = [];
    — pattern/mute/Instruments mapping stays exactly as before. */
 const BUILD_ORDER = IS_MOBILE ? [6, 5, 4, 3, 2, 1, 0] : [0, 1, 2, 3, 4, 5, 6];
 
-/* build the grid: one label + 16 step buttons per row */
+/* build the grid: 16 step buttons per row */
 for (const r of BUILD_ORDER) {
-  const label = document.createElement("div");
-  label.className = "seq-label";
-  label.textContent = ROW_LABELS[r];
-  grid.appendChild(label);
-
   for (let s = 0; s < STEPS; s++) {
     const cell = document.createElement("button");
     cell.type = "button";
