@@ -147,10 +147,10 @@ const Instruments = (() => {
     lpf.frequency.value = 2600;
 
     const dryGain = audioContext.createGain();
-    dryGain.gain.value = 0.1;
+    dryGain.gain.value = 0.09;
 
     const sendGain = audioContext.createGain();
-    sendGain.gain.value = 0.1;
+    sendGain.gain.value = 0.09;
 
     source.connect(hpf);
     hpf.connect(lpf);
