@@ -61,7 +61,7 @@ body {
 
 @media (max-width: 600px) {
   .mobile-spacer {
-    height: 20px;
+    height: 0px;
   }
 }
 
@@ -145,29 +145,39 @@ a:hover {
   position: relative;
 }
 
+/* fixed, not fit-content: must equal .seq-grid's own total width (16*26 +
+   31 + 91 steps/mute/vol columns + 17*4 gaps = 606) plus .seq-grid-wrap's
+   2*13px padding = 632px. Both .seq-topbar and .seq-grid-wrap then fill
+   this exact width (normal block auto-width), which is what lets the
+   topbar's edges and the grid's edges align by construction below —
+   update this if the grid's columns/gap/padding ever change. */
 .seq-panel {
-  width: fit-content;
+  width: 632px;
   margin: 0;
 }
 
+/* play/mute pinned to the panel's true left/right edges via space-between,
+   so they always line up with the grid's first/last column regardless of
+   how wide the bpm/drive/filter labels actually render (font metrics
+   aren't something we can pin down in CSS alone) */
 .seq-topbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 13px;
   padding: 10px 13px 26px;
 }
 
-/* pushed to the topbar's own right edge, which sits at the same inset
-   (13px padding) from .seq-panel's edge as .seq-grid's last column does
-   via .seq-grid-wrap's matching 13px padding — so the two line up by
-   construction, not by coincidentally-matching content widths */
-#seq-mute {
-  margin-left: auto;
+.seq-fader-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .seq-play-btn {
   width: 36px;
   height: 36px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -284,7 +294,7 @@ a:hover {
 
 .seq-grid {
   display: inline-grid;
-  grid-template-columns: repeat(16, 26px) 31px 65px;
+  grid-template-columns: repeat(16, 26px) 31px 91px;
   gap: 4px;
 }
 
@@ -334,7 +344,7 @@ a:hover {
   appearance: none;
   align-self: center;
   justify-self: start;
-  width: 60px;
+  width: 91px;
   height: 8px; /* rectangle, slightly narrower than the 10px thumb */
   background: #3a3a3a;
   border-radius: 3px;
