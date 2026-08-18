@@ -199,8 +199,8 @@ const Instruments = (() => {
     const send1 = audioContext.createGain();
     const volume = audioContext.createGain();
 
-    inputGain.connect(send1);
     inputGain.connect(volume);
+    volume.connect(send1);
     volume.connect(masterBus);
     send1.connect(fx1Send);
 
