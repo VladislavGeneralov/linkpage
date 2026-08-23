@@ -1,0 +1,1875 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Klamin — spike</title>
+<style>
+  /*
+    Unified token set — every color in the app (CSS and canvas both) traces
+    back to this list. JS reads these at load via getComputedStyle so canvas
+    drawing never hardcodes a color that could drift from here. See README
+    "Visual style" section for what each token means.
+  */
+  :root {
+    --bg: #000000;
+    --panel: #171310;
+    --ink: #ece6da;
+    --ink-dim: #625c52;
+    --accent: #e3a458;
+    --accent-dim: #7a5a34;
+    --edge: #0e0b08;
+    --gold: #d4af37;
+    --vinyl: #241608;
+    --danger: #c4503c;
+    --ivory: #f2ede2;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: system-ui, sans-serif;
+    overscroll-behavior: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  #stage {
+    min-height: 100svh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+  }
+
+  #app {
+    width: 100%;
+    max-width: 480px;
+    height: 100svh;
+    height: 100dvh;
+    max-height: 900px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    position: relative;
+    overflow: hidden;
+  }
+
+  @media (min-width: 520px) {
+    #app {
+      border: 1px solid #2a231a;
+      box-shadow: 0 30px 90px rgba(0,0,0,0.55);
+      max-height: 860px;
+    }
+  }
+
+  /* Palette: a 2x10 grid of minerals, windowed by however many columns
+     actually fit the screen at a fixed button size (not forced to exactly
+     5) — the rest is reached by sliding sideways from anywhere on the
+     palette (not just the buttons). Modest side padding so buttons aren't
+     flush with the screen edge; the clip boundary is still the real edge of
+     that padded area, not a narrower inner frame. */
+  #palette {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 0 max(18px, env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 2px solid var(--edge);
+  }
+  #paletteViewport {
+    width: 100%;
+    padding: 6px 10px;
+    overflow: hidden;
+    touch-action: none;
+  }
+  #paletteTrack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    will-change: transform;
+    /* width set by JS: PALETTE_COLS_TOTAL * button size + gaps, kept in sync by hand */
+  }
+  .paletteRow { display: flex; gap: 14px; }
+
+  .mineralBtn {
+    flex: 0 0 auto;
+    width: 50px;
+    height: 50px;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    touch-action: none;
+    cursor: grab;
+    transition: filter 0.4s ease-out;
+  }
+  /* Tap-to-preview flash: same snap-then-fade technique as the number menu,
+     via drop-shadow since these buttons are a background-image, not a flat
+     fill — it glows around the mineral's own silhouette. */
+  .mineralBtn.flash { filter: drop-shadow(0 0 10px var(--gold)) brightness(1.5); transition: none; }
+
+  #paletteScrollbar {
+    width: 100%;
+    height: 6px;
+    background: var(--edge);
+    position: relative;
+  }
+  #paletteScrollbarThumb {
+    position: absolute;
+    top: 0; bottom: 0; left: 0;
+    background: var(--accent-dim);
+    touch-action: none;
+    cursor: grab;
+  }
+
+  #discWrap { flex: 1 1 auto; position: relative; min-height: 0; }
+  #disc { display: block; width: 100%; height: 100%; touch-action: none; }
+
+  /* Dragged-from-palette preview — a real DOM element with position:fixed so
+     it renders above the palette panel too, not clipped by canvas/#app. */
+  #dragGhost {
+    position: fixed;
+    left: 0; top: 0;
+    width: 46px; height: 46px;
+    margin-left: -23px; margin-top: -23px;
+    pointer-events: none;
+    z-index: 100;
+    display: none;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+  }
+  #dragGhost.valid { filter: drop-shadow(0 0 6px var(--accent)); }
+  #dragGhost.caught { filter: drop-shadow(0 0 10px var(--gold)); }
+  #dragGhost.invalid { filter: drop-shadow(0 0 6px var(--danger)); }
+
+  /* Long-press menu: pick how many of a mineral to scatter evenly (Euclidean
+     spacing) around the disc. Narrow column of numbers, anchored to the
+     palette button that was held. */
+  #numberMenu {
+    position: fixed;
+    display: none;
+    flex-direction: column;
+    background: var(--panel);
+    border: 2px solid var(--edge);
+    z-index: 150;
+  }
+  .numberMenuItem {
+    width: 46px;
+    height: 34px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    background: var(--panel);
+    color: var(--ink-dim);
+    border-bottom: 1px solid var(--edge);
+    touch-action: manipulation;
+    cursor: pointer;
+    transition: background 0.4s ease-out, color 0.4s ease-out;
+  }
+  .numberMenuItem:last-child { border-bottom: none; }
+  /* Selection flash: snap to gold instantly (no transition), then the class
+     is removed on the next frame so the base rule's transition fades it
+     back — the "light up, then smoothly fade" the user asked for. */
+  .numberMenuItem.flash { background: var(--gold); color: var(--edge); transition: none; }
+  .numberMenuItem.clearItem { border-top: 2px solid var(--edge); }
+  .numberMenuItem.clearItem.flash { background: var(--danger); color: var(--edge); }
+
+  /* Round control buttons pinned to the disc's four corners — same shape,
+     same size, same base coloring throughout, each labeled below itself.
+     REVERB (opens a panel) sits top-left, under Play; CLEAR
+     (momentary) sits top-right, under REV; SAMPLES (reserved) sits
+     bottom-left; QUANT (persistent on/off) sits bottom-right, turning gold
+     while it's on instead of using CLEAR's press-flash, since its color has
+     to hold as a state, not just flash on tap. */
+  .roundCtrlBtn {
+    position: absolute;
+    z-index: 2;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--edge);
+    border: 2px solid var(--ink-dim);
+    color: var(--ink-dim);
+    font-family: system-ui, sans-serif;
+    font-size: 8px;
+    font-weight: 400;
+    padding: 0;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  .roundCtrlBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .roundCtrlLabel {
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 4px;
+    font-size: 6px;
+    font-weight: 400;
+    color: var(--ink-dim);
+    white-space: nowrap;
+  }
+  #reverbBtn { top: 12px; left: 12px; z-index: 6; }
+  .iconRipple {
+    position: relative;
+    width: 20px; height: 20px;
+  }
+  .iconRipple span {
+    position: absolute;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 1px solid currentColor;
+  }
+  .iconRipple span:nth-child(1) { width: 18px; height: 18px; }
+  .iconRipple span:nth-child(2) { width: 12px; height: 12px; }
+  .iconRipple span:nth-child(3) { width: 6px; height: 6px; }
+  /* REVERB's icon swaps in place for a small gold cross while its panel is
+     open, rather than a second button appearing elsewhere — same slot,
+     same circle, same center, different face. No label in the open state. */
+  .reverbIconOpen { display: none; color: var(--gold); }
+  #reverbBtn.open .reverbIconClosed, #reverbBtn.open .reverbLabelClosed { display: none; }
+  #reverbBtn.open .reverbIconOpen { display: block; }
+  /* The circle itself disappears into the panel behind it while open —
+     same background, no border — so only the cross reads, not a button
+     still sitting on top of the panel. */
+  #reverbBtn.open { background: var(--panel); border-color: var(--panel); }
+  /* Full working width of the app frame (not the raw viewport — this is a
+     phone instrument first even on desktop), roughly the height of the top
+     controls bar. Holds one slider — see .faderTrackLook below. */
+  #reverbPanel {
+    display: none;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 82px;
+    z-index: 5;
+    background: var(--panel);
+    border-bottom: 2px solid var(--edge);
+  }
+  #reverbPanel.open { display: block; }
+  /* Mirrors #controls' own row exactly — 18px side padding, 16px gaps, a
+     52px spacer standing in for Play and a 15px one for REV's track — so
+     the slider lands at the identical horizontal position/width as the
+     speed fader above it, not a hand-copied pixel guess. */
+  #reverbPanelRow {
+    display: flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 18px;
+    gap: 16px;
+  }
+  .reverbPanelSpacer { flex: 0 0 auto; }
+  .reverbPanelSpacerWide { flex-basis: 52px; }
+  .reverbPanelSpacerNarrow { flex-basis: 15px; }
+  #clearBtn { top: 12px; right: 12px; }
+  #clearBtn:active { background: var(--danger); color: var(--edge); border-color: var(--danger); }
+  .iconX {
+    position: relative;
+    width: 12px; height: 12px;
+  }
+  .iconX::before, .iconX::after {
+    content: "";
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 12px; height: 1px;
+    background: currentColor;
+  }
+  .iconX::before { transform: translate(-50%, -50%) rotate(45deg); }
+  .iconX::after { transform: translate(-50%, -50%) rotate(-45deg); }
+  #placeholderBtn { bottom: 12px; left: 12px; cursor: default; }
+  /* Outline-only (no fill) — the CSS border-trick used for other triangles
+     can't make a hollow shape, so this one is a small inline SVG stroke
+     instead. currentColor picks up the button's own color, same as the
+     border-trick icons. */
+  .iconTriangleUp { display: block; }
+  #quantToggle { bottom: 12px; right: 12px; font-size: 15px; }
+  #quantToggle.on { background: var(--gold); border-color: var(--gold); color: var(--edge); }
+
+  /* Toggle rule, established once here: the track's *height* — border
+     included, box-sizing is border-box globally — matches the fader's own
+     30px height; its width is narrow (12px), independent of that. The
+     label always sits below the track, absolutely positioned out of flow —
+     so a toggle's track is what aligns with neighboring controls, never
+     shifted by its own label's width or presence. Now only REV uses this
+     shape; QUANT moved to the round button style above. */
+
+  #clearConfirm {
+    position: fixed;
+    left: 0; top: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+  }
+  #clearConfirmBox {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 2px solid var(--ink-dim);
+  }
+  #clearConfirmQuestion {
+    padding: 14px 20px 10px;
+    font-family: system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    color: var(--ink);
+    text-align: center;
+    white-space: nowrap;
+  }
+  #clearConfirmActions {
+    display: flex;
+    gap: 2px;
+  }
+  #clearConfirmActions button {
+    flex: 1 1 0;
+    min-width: 0;
+    font-family: system-ui, sans-serif;
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.05em;
+    padding: 14px 20px;
+    background: var(--edge);
+    color: var(--ink-dim);
+    border: none;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #clearClearBtn { color: var(--danger); }
+  #clearCancelBtn:active { background: var(--accent-dim); color: var(--edge); }
+  #clearClearBtn:active { background: var(--danger); color: var(--edge); }
+  .inlineToggle {
+    position: relative;
+    flex: 0 0 auto;
+    touch-action: none;
+    cursor: pointer;
+  }
+  /* REV has no text label — a right-pointing triangle above the track and a
+     left-pointing one below stand in for it, reading as "forward" (up,
+     toward normal) and "reverse" (down, toward flipped) either way the
+     toggle looks at. */
+  .revArrow {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 0; height: 0;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+  }
+  .revArrowUp { bottom: 100%; margin-bottom: 5px; border-left: 6px solid var(--ink-dim); }
+  .revArrowDown { top: 100%; margin-top: 5px; border-right: 6px solid var(--ink-dim); }
+  .inlineToggleTrack {
+    width: 15px;
+    height: 30px;
+    background: var(--edge);
+    border: 2px solid var(--ink-dim);
+    position: relative;
+  }
+  .inlineToggleKnob {
+    position: absolute;
+    left: 1px; right: 1px;
+    bottom: 1px;
+    height: 12px;
+    background: var(--gold);
+  }
+  .inlineToggle.on .inlineToggleKnob { bottom: calc(100% - 13px); }
+  .inlineToggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #controls {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: max(14px, env(safe-area-inset-top)) 18px 14px;
+    background: var(--panel);
+    border-bottom: 2px solid var(--edge);
+    touch-action: none;
+  }
+
+  #playBtn {
+    flex: 0 0 auto;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    border: 2px solid var(--ink-dim);
+    background: var(--gold);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+    cursor: pointer;
+  }
+  #playBtn:active { background: var(--edge); }
+  #playBtn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Drawn shapes, not a Unicode glyph (▶/❚❚ render at wildly different
+     proportions depending on the platform's fallback font) — this way the
+     icon is pixel-identical everywhere. */
+  .iconTriangle {
+    width: 0; height: 0;
+    border-top: 9px solid transparent;
+    border-bottom: 9px solid transparent;
+    border-left: 15px solid var(--edge);
+    margin-left: 4px;
+  }
+  .iconBars { display: none; gap: 5px; }
+  .iconBars span { width: 5px; height: 18px; background: var(--edge); display: block; }
+  #playBtn.playing .iconTriangle { display: none; }
+  #playBtn.playing .iconBars { display: flex; }
+
+  #faderWrap { flex: 1 1 auto; display: flex; align-items: center; min-width: 0; touch-action: none; }
+  /* Shared look, not just faderTrack's own — the reverb panel's slider
+     reuses this class so it's guaranteed pixel-identical, not just visually
+     similar. */
+  .faderTrackLook {
+    position: relative;
+    flex: 1 1 auto;
+    height: 30px;
+    background: var(--edge);
+    border: 2px solid var(--edge);
+    box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+    touch-action: none;
+  }
+  .faderThumbLook {
+    position: absolute;
+    top: -6px; bottom: -6px;
+    width: 18px;
+    background: var(--gold);
+    border: 2px solid var(--edge);
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .faderThumbLook::after {
+    content: "";
+    position: absolute;
+    left: 50%; top: 50%;
+    width: 2px; height: 60%;
+    background: var(--edge);
+    transform: translate(-50%, -50%);
+  }
+  .faderTrackLook:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="stage">
+<div id="app">
+  <div id="controls">
+    <button id="playBtn" type="button" aria-label="Play / Pause">
+      <span class="iconTriangle"></span>
+      <span class="iconBars"><span></span><span></span></span>
+    </button>
+    <div id="faderWrap">
+      <div id="faderTrack" class="faderTrackLook" role="slider" aria-label="Rotation speed" aria-valuemin="0" aria-valuemax="1" tabindex="0">
+        <div id="faderThumb" class="faderThumbLook"></div>
+      </div>
+    </div>
+    <div id="reverseToggle" class="inlineToggle" role="switch" aria-checked="false" tabindex="0" aria-label="Reverse">
+      <span class="revArrow revArrowUp"></span>
+      <div class="inlineToggleTrack"><div class="inlineToggleKnob"></div></div>
+      <span class="revArrow revArrowDown"></span>
+    </div>
+  </div>
+  <div id="discWrap">
+    <canvas id="disc"></canvas>
+    <div id="reverbPanel">
+      <div id="reverbPanelRow">
+        <div class="reverbPanelSpacer reverbPanelSpacerWide" aria-hidden="true"></div>
+        <div id="reverbFaderTrack" class="faderTrackLook" role="slider" aria-label="Reverb amount" aria-valuemin="0" aria-valuemax="1" tabindex="0">
+          <div id="reverbFaderThumb" class="faderThumbLook"></div>
+        </div>
+        <div class="reverbPanelSpacer reverbPanelSpacerNarrow" aria-hidden="true"></div>
+      </div>
+    </div>
+    <button id="reverbBtn" class="roundCtrlBtn" type="button" aria-label="Reverb" aria-expanded="false">
+      <span class="iconRipple reverbIconClosed"><span></span><span></span><span></span></span>
+      <span class="iconX reverbIconOpen"></span>
+      <span class="roundCtrlLabel reverbLabelClosed">REVERB</span>
+    </button>
+    <button id="clearBtn" class="roundCtrlBtn" type="button" aria-label="Clear all">
+      <span class="iconX"></span>
+      <span class="roundCtrlLabel">CLEAR</span>
+    </button>
+    <button id="placeholderBtn" class="roundCtrlBtn" type="button" tabindex="-1" aria-hidden="true">
+      <svg class="iconTriangleUp" viewBox="0 0 14 12" width="14" height="12"><polygon points="7,1 13,11 1,11" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <span class="roundCtrlLabel">SAMPLES</span>
+    </button>
+    <button id="quantToggle" class="roundCtrlBtn" type="button" role="switch" aria-checked="false" aria-label="Quantize">
+      <span>Q</span>
+      <span class="roundCtrlLabel">QUANTIZE</span>
+    </button>
+  </div>
+  <div id="palette">
+    <div id="paletteViewport">
+      <div id="paletteTrack">
+        <div class="paletteRow" id="paletteRowTop"></div>
+        <div class="paletteRow" id="paletteRowBottom"></div>
+      </div>
+    </div>
+    <div id="paletteScrollbar"><div id="paletteScrollbarThumb"></div></div>
+  </div>
+  <div id="dragGhost"></div>
+  <div id="numberMenu"></div>
+  <div id="clearConfirm">
+    <div id="clearConfirmBox">
+      <div id="clearConfirmQuestion">CLEAR SEQUENCE?</div>
+      <div id="clearConfirmActions">
+        <button id="clearCancelBtn" type="button">CANCEL</button>
+        <button id="clearClearBtn" type="button">CLEAR</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ================= theme: single source of truth, read from CSS =================
+  var rootStyle = getComputedStyle(document.documentElement);
+  function cssVar(name) { return rootStyle.getPropertyValue(name).trim(); }
+  var THEME = {
+    bg: cssVar('--bg'), panel: cssVar('--panel'), ink: cssVar('--ink'),
+    inkDim: cssVar('--ink-dim'), accent: cssVar('--accent'), accentDim: cssVar('--accent-dim'),
+    edge: cssVar('--edge'), gold: cssVar('--gold'), vinyl: cssVar('--vinyl'),
+    danger: cssVar('--danger'), ivory: cssVar('--ivory')
+  };
+  function hexToRgba(hex, a) {
+    var h = hex.replace('#', '');
+    if (h.length === 3) h = h.split('').map(function (c) { return c + c; }).join('');
+    var r = parseInt(h.substr(0, 2), 16), g = parseInt(h.substr(2, 2), 16), b = parseInt(h.substr(4, 2), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + a + ')';
+  }
+  // Colors that are the same on every single frame the render loop draws —
+  // computed once here instead of re-parsing hex and building a new string
+  // 60 times a second for values that never change.
+  var COLOR_QUANT_GRID_ON = hexToRgba(THEME.gold, 0.4);
+  var COLOR_QUANT_GRID_OFF = 'rgba(0,0,0,0.35)';
+  var COLOR_PLAYHEAD_DIM = hexToRgba(THEME.gold, 0.55);
+
+  // ================= minerals: 20 slots, one fixed sample each =================
+  // No bank concept anymore — each of the 20 is always itself, image and
+  // sound both, so minerals already on the disc never change underneath you.
+  var OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  var decodeCtx = new OfflineCtx(1, 1, 44100);
+
+  var MINERAL_COLORS = ['#cbb9e8', '#e3a458', '#5b6068', '#4fae82', '#8c8375',
+                         '#c1503f', '#4fb3c2', '#3a2f45', '#d9c23a', '#7a2f3a',
+                         '#8fae64', '#2f4f7a', '#c98a3c', '#6b7a8f', '#9c6b9e',
+                         '#3f6b5c', '#a85c32', '#5c4a7a', '#b0895c', '#7a1f2e',
+                         '#5e8a9e', '#9e7a4a'];
+  var MINERALS = [];
+  for (var n = 1; n <= 22; n++) {
+    MINERALS.push({ num: n, color: MINERAL_COLORS[n - 1], buffer: null });
+  }
+  MINERALS.forEach(function (slot) {
+    slot.img = new Image();
+    slot.img.src = 'minerals/' + slot.num + '.webp';
+    fetch('samples/' + slot.num + '.wav')
+      .then(function (r) { if (!r.ok) throw new Error('missing'); return r.arrayBuffer(); })
+      .then(function (ab) { return decodeCtx.decodeAudioData(ab); })
+      .then(function (buf) { slot.buffer = buf; })
+      .catch(function () { /* sample not present on disk yet */ });
+  });
+
+  var quantizeOn = false;
+  var quantToggle = document.getElementById('quantToggle');
+  var QUANT_STEPS = 16;
+  function setQuantize(v) {
+    quantizeOn = v;
+    quantToggle.classList.toggle('on', v);
+    quantToggle.setAttribute('aria-checked', v ? 'true' : 'false');
+  }
+  quantToggle.addEventListener('pointerdown', function (e) { e.preventDefault(); setQuantize(!quantizeOn); });
+  quantToggle.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setQuantize(!quantizeOn); }
+  });
+
+  // ================= viewport / canvas sizing with sanity-check retry =================
+  var canvas = document.getElementById('disc');
+  var discWrap = document.getElementById('discWrap');
+  var ctx2d = canvas.getContext('2d');
+  var dpr = Math.max(window.devicePixelRatio || 1, 1);
+  var MIN_PLAUSIBLE = 100;
+  var sizeRetries = 0;
+  var cssW = 0, cssH = 0;
+  // canvas.getBoundingClientRect() is a forced-layout call — cheap once, but
+  // several call sites used to run it every rAF frame or on every raw
+  // pointermove (which can fire faster than rAF on some touchscreens). The
+  // layout here is fixed (no scroll, sized off svh), so the canvas only
+  // actually moves on a real resize — cache it and only refresh there.
+  var canvasRect = { left: 0, top: 0 };
+  function updateCanvasRect() {
+    var r = canvas.getBoundingClientRect();
+    canvasRect.left = r.left; canvasRect.top = r.top;
+  }
+
+  function applySize(rect) {
+    if (rect.width < MIN_PLAUSIBLE || rect.height < MIN_PLAUSIBLE) {
+      if (sizeRetries < 12) {
+        sizeRetries++;
+        requestAnimationFrame(function () { applySize(discWrap.getBoundingClientRect()); });
+      }
+      return;
+    }
+    sizeRetries = 0;
+    cssW = rect.width; cssH = rect.height;
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    updateCanvasRect();
+  }
+
+  var ro = new ResizeObserver(function (entries) {
+    for (var i = 0; i < entries.length; i++) applySize(entries[i].contentRect);
+  });
+  ro.observe(discWrap);
+  applySize(discWrap.getBoundingClientRect());
+  window.addEventListener('resize', updateCanvasRect);
+  window.addEventListener('orientationchange', updateCanvasRect);
+
+  document.addEventListener('touchmove', function (e) {
+    if (e.target.closest('input, button, .mineralBtn, .inlineToggle, #faderTrack, #reverbFaderTrack, #numberMenu, #paletteViewport, #paletteScrollbarThumb, #clearConfirm')) return;
+    e.preventDefault();
+  }, { passive: false });
+
+  // ================= clock: one clock for everything (perf time) =================
+  function nowSec() { return performance.now() / 1000; }
+  function mod2pi(a) { var m = a % (2 * Math.PI); return m < 0 ? m + 2 * Math.PI : m; }
+  function angDist(a, b) { var d = mod2pi(a - b); return Math.min(d, 2 * Math.PI - d); }
+  // Shortest signed a->b step (in [-PI, PI)) — used to accumulate the
+  // handle drag incrementally, frame to frame, so a multi-revolution drag
+  // never snaps backward at the 2*PI wrap.
+  function signedAngDiff(a, b) { return mod2pi(b - a + Math.PI) - Math.PI; }
+
+  // ================= rotation state: exponential ramp segments =================
+  function RotationState() {
+    this.t0 = nowSec();
+    this.angle0 = 0;
+    this.v0 = 0;
+    this.vTarget = 0;
+    this.tau = 0.001;
+  }
+  RotationState.prototype.angleAt = function (t) {
+    var dt = t - this.t0;
+    if (dt <= 0) return this.angle0;
+    return this.angle0 + this.vTarget * dt + (this.v0 - this.vTarget) * this.tau * (1 - Math.exp(-dt / this.tau));
+  };
+  RotationState.prototype.speedAt = function (t) {
+    var dt = t - this.t0;
+    if (dt <= 0) return this.v0;
+    return this.vTarget + (this.v0 - this.vTarget) * Math.exp(-dt / this.tau);
+  };
+  RotationState.prototype.startRamp = function (vTarget, tau, now) {
+    var a = this.angleAt(now), v = this.speedAt(now);
+    this.angle0 = a; this.v0 = v; this.t0 = now;
+    this.vTarget = vTarget; this.tau = Math.max(tau, 0.001);
+  };
+  // Hard snap to an angle with zero velocity — used by the handle drag,
+  // which sets the disc's angle directly frame by frame rather than ramping
+  // toward it.
+  RotationState.prototype.setAngleNow = function (angle, now) {
+    this.angle0 = angle; this.v0 = 0; this.vTarget = 0; this.t0 = now; this.tau = 0.001;
+  };
+  // Jump straight to a given speed with no ramp-up — used when letting go of
+  // the handle: it should resume at the fader's speed immediately, not
+  // accelerate from the 0 the manual drag left it at.
+  RotationState.prototype.setSpeedNow = function (v, now) {
+    this.angle0 = this.angleAt(now); this.v0 = v; this.vTarget = v; this.t0 = now; this.tau = 0.001;
+  };
+  var rotation = new RotationState();
+
+  // ================= minerals placed on the disk =================
+  var disk = []; // {id, mineralIndex, thetaOffset, radiusFrac, rotBase, muted, lastK, prevPhase, flashUntil}
+  function uid() { return Math.random().toString(36).slice(2); }
+
+  var DEAD_ZONE = 0.16;
+  var COLLISION_FRAC = 0.08;  // true-overlap radius — only used to verify a nudge actually cleared
+  var ASSIST_FRAC = 0.22;     // wide "nearby" zone: dropping this close to a stone nudges beside it instead of rejecting
+  var NUDGE_ANGLE = 0.35;     // radians, freeform nudge offset when assisted
+
+  function diskRadiusCss() { return Math.min(cssW, cssH) * 0.47; }
+
+  // Handle geometry — the single source of truth for both drawing the
+  // handle and hit-testing it, so the grab zone never drifts from what's
+  // actually on screen.
+  function handleGeom(R) {
+    var hRingOuterR = R * 0.05, hRingHoleR = R * 0.022;
+    var hKnobCy = R * 0.19, hKnobOuterR = R * 0.038, hKnobDotR = R * 0.015;
+    var hShaftHalfW = R * 0.014 * 1.8;
+    var hShaftFrom = hRingOuterR * 0.5;
+    var hShaftTo = hKnobCy - hKnobOuterR * 0.5;
+    return { hRingOuterR: hRingOuterR, hRingHoleR: hRingHoleR, hKnobCy: hKnobCy,
+             hKnobOuterR: hKnobOuterR, hKnobDotR: hKnobDotR, hShaftHalfW: hShaftHalfW,
+             hShaftFrom: hShaftFrom, hShaftTo: hShaftTo };
+  }
+
+  // Quantize collisions are resolved by sliding along the radius of a shared
+  // line, never by hopping to a different line — radius doesn't affect
+  // sound, so several minerals on one line is normal, not a conflict.
+  // Shared by manual quantized placement and Euclidean multi-placement.
+  function resolveLineRadius(thetaOffset, radiusFrac, excludeIdx) {
+    var guard = 0, collided = true;
+    while (collided && guard < 40) {
+      collided = false;
+      for (var i = 0; i < disk.length; i++) {
+        if (i === excludeIdx) continue;
+        var occ = disk[i];
+        if (angDist(occ.thetaOffset, thetaOffset) > 0.001) continue;
+        if (Math.abs(occ.radiusFrac - radiusFrac) < COLLISION_FRAC) {
+          radiusFrac = occ.radiusFrac + (radiusFrac >= occ.radiusFrac ? 1 : -1) * COLLISION_FRAC * 1.05;
+          radiusFrac = Math.max(0.22, Math.min(0.92, radiusFrac));
+          collided = true;
+        }
+      }
+      guard++;
+    }
+    return radiusFrac;
+  }
+
+  // Live drag preview only checks the dead zone — collisions are resolved
+  // (nudged, not rejected) at drop time in finishDrag, not on every pointermove.
+  function evalDrop(clientX, clientY) {
+    var Rcss = diskRadiusCss();
+    var dx = clientX - (canvasRect.left + cssW / 2);
+    var dy = clientY - (canvasRect.top + cssH / 2);
+    var distPx = Math.hypot(dx, dy);
+    var radiusFrac = Rcss > 0 ? distPx / Rcss : 0;
+    var worldAngle = mod2pi(Math.atan2(dx, -dy));
+    var valid = radiusFrac >= DEAD_ZONE && radiusFrac <= 1.02;
+    return { radiusFrac: radiusFrac, worldAngle: worldAngle, valid: valid };
+  }
+
+  // Whether a drag position is close enough to a quantize line to visually
+  // "catch" — a plain pixel distance (arc length at the drag's own radius),
+  // not an angle: the catch length is exactly one mineral's diameter.
+  var MINERAL_DOT_FRAC = 0.055; // matches the base dot radius drawn in draw()
+  function isNearQuantLine(clientX, clientY) {
+    if (!quantizeOn) return false;
+    var ev = evalDrop(clientX, clientY);
+    if (!ev.valid) return false;
+    var diskZero = rotation.angleAt(nowSec());
+    var theta = mod2pi(ev.worldAngle - diskZero);
+    var step = 2 * Math.PI / QUANT_STEPS;
+    var nearestLine = Math.round(theta / step) * step;
+    var Rcss = diskRadiusCss();
+    var arcPx = angDist(theta, nearestLine) * ev.radiusFrac * Rcss;
+    var mineralDiameterPx = 2 * MINERAL_DOT_FRAC * Rcss;
+    return arcPx < mineralDiameterPx;
+  }
+
+  function hitTestMineral(clientX, clientY) {
+    var Rcss = diskRadiusCss();
+    var now = nowSec();
+    var diskZero = rotation.angleAt(now);
+    var best = -1, bestDist = Infinity;
+    for (var i = 0; i < disk.length; i++) {
+      var m = disk[i];
+      var world = mod2pi(diskZero + m.thetaOffset);
+      var x = canvasRect.left + cssW / 2 + m.radiusFrac * Rcss * Math.sin(world);
+      var y = canvasRect.top + cssH / 2 - m.radiusFrac * Rcss * Math.cos(world);
+      var d = Math.hypot(x - clientX, y - clientY);
+      if (d < Math.max(30, Rcss * 0.09) && d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
+  }
+
+  function pointerWorldAngle(clientX, clientY) {
+    var dx = clientX - (canvasRect.left + cssW / 2);
+    var dy = clientY - (canvasRect.top + cssH / 2);
+    return mod2pi(Math.atan2(dx, -dy));
+  }
+
+  // Grab zone for the handle (ring + shaft + knob), each padded by
+  // HANDLE_GRAB_MARGIN beyond its drawn edge — a real touch target, not
+  // just its visible pixels. Rotates the touch point into the handle's own
+  // local frame, the inverse of the disc's rotate(diskAngle) used to draw
+  // it, then tests it against the same shapes handleGeom describes.
+  var HANDLE_GRAB_MARGIN = 6;
+  function hitTestHandle(clientX, clientY) {
+    var R = diskRadiusCss();
+    if (R <= 0) return false;
+    var hg = handleGeom(R);
+    var a = mod2pi(rotation.angleAt(nowSec()));
+    var dx = clientX - (canvasRect.left + cssW / 2);
+    var dy = clientY - (canvasRect.top + cssH / 2);
+    if (Math.hypot(dx, dy) <= hg.hRingOuterR + HANDLE_GRAB_MARGIN) return true;
+    var ca = Math.cos(a), sa = Math.sin(a);
+    var lx = dx * ca + dy * sa;
+    var lup = dx * sa - dy * ca;
+    if (Math.abs(lx) <= hg.hShaftHalfW + HANDLE_GRAB_MARGIN &&
+        lup >= hg.hShaftFrom - HANDLE_GRAB_MARGIN && lup <= hg.hShaftTo + HANDLE_GRAB_MARGIN) return true;
+    if (Math.hypot(lx, lup - hg.hKnobCy) <= hg.hKnobOuterR * 1.18 + HANDLE_GRAB_MARGIN) return true;
+    return false;
+  }
+
+  // ================= audio =================
+  var audioCtx = null;
+  var clockOffset = 0; // perfSeconds - audioCtxSeconds
+  var isPlaying = false;
+  var FADER_MIN_SPEED = 0.5;
+  var FADER_MAX_SPEED = 14;
+  function faderToSpeed(t) { return FADER_MIN_SPEED * Math.pow(FADER_MAX_SPEED / FADER_MIN_SPEED, t); }
+  var desiredSpeed = faderToSpeed(0.502); // always a positive magnitude — direction comes from reverseOn
+  var reverseOn = false;
+  function signedTarget() { return reverseOn ? -desiredSpeed : desiredSpeed; }
+  var LONG_TAU = 0.9;
+  var SHORT_TAU = 0.05;
+  var schedTimer = null;
+
+  function perfToAudio(pt) { return pt - clockOffset; }
+
+  function ensureAudio() {
+    if (audioCtx) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    clockOffset = nowSec() - audioCtx.currentTime;
+    schedTimer = setInterval(schedulerTick, SCHED_INTERVAL_MS);
+  }
+
+  function playMineralAt(mineralIndex, audioTime) {
+    var slot = MINERALS[mineralIndex];
+    var buf = slot && slot.buffer;
+    if (!buf || !audioCtx) return null;
+    var src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    // Parallel tap, dry path above unaffected — only wired in while the knob
+    // is actually up, so the convolver has nothing to chew on (and nothing
+    // to cost) whenever reverb is dialed back to off.
+    if (reverbSendGain && reverbAmount > 0) src.connect(reverbSendGain);
+    src.start(Math.max(audioTime, audioCtx.currentTime));
+    return src;
+  }
+
+  // ================= reverb: ported from SUAQ26's Dattorro plate =================
+  // A ConvolverNode-based engine was tried first (native, cheaper in theory)
+  // but a fixed impulse buffer fundamentally fights live decay-time control
+  // — every fix for one glitch (tail cut short on length-cap truncation,
+  // tail reset on buffer reassignment, tail reset again from blind ping-
+  // pong slot reuse) was working around that same mismatch, and it was
+  // still audibly misbehaving under fast slider movement. Dattorro is a
+  // real feedback delay network — decay/damping/wet are plain AudioParams
+  // that ramp smoothly via setTargetAtTime with no buffer to reassign and
+  // no state to reset, so none of that class of bug can happen here. The
+  // real cost: it's an AudioWorkletProcessor doing per-sample JS DSP
+  // continuously for as long as it's connected, unlike a ConvolverNode
+  // that can (in principle) sit idle for free — so the node itself is only
+  // ever connected into the graph while the knob is above 0, exactly
+  // mirroring how the mineral-source send tap already only connects above
+  // 0, and disconnected again the moment it drops back to 0.
+  var reverbSendGain = null;
+  var reverbHighpass = null;
+  var reverbNode = null; // AudioWorkletNode, created once the module finishes loading (async)
+  var reverbConnected = false; // whether reverbNode is currently wired into the graph
+  var REVERB_MAX_WET = 0.9; // capped so the wet path can never fully swallow the dry signal
+  var REVERB_MIN_DECAY = 0.3, REVERB_MAX_DECAY = 0.85; // Dattorro's own decay/feedback coefficient, not seconds — kept off 1.0 to avoid runaway sustain
+
+  function ensureReverb() {
+    if (reverbSendGain) return; // graph nodes already set up (or being set up)
+    reverbSendGain = audioCtx.createGain();
+    reverbSendGain.gain.value = 0;
+    // Highpass ahead of the tank so low end doesn't build up/muddy in the
+    // tail — reverb is on the send, not the dry signal, so this only ever
+    // shapes the wet path.
+    reverbHighpass = audioCtx.createBiquadFilter();
+    reverbHighpass.type = 'highpass';
+    reverbHighpass.frequency.value = 100;
+    reverbSendGain.connect(reverbHighpass);
+
+    audioCtx.audioWorklet.addModule('reverb-processor.js').then(function () {
+      reverbNode = new AudioWorkletNode(audioCtx, 'DattorroReverb', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+      // wet=1/dry=0: the node's own dry-passthrough is unused — each
+      // mineral already has its own direct-to-destination connection for
+      // that, so the node only ever needs to hand back its wet signal in
+      // full, with our own reverbSendGain being the sole level knob.
+      reverbNode.parameters.get('wet').value = 1;
+      reverbNode.parameters.get('dry').value = 0;
+      reverbNode.parameters.get('damping').value = 0.3; // tames the top end in the feedback loop — the processor's own built-in default (0.005) is near-none, too bright/harsh for percussive mineral hits
+      applyReverbAmount(reverbAmount); // sync now that the node actually exists
+    });
+  }
+
+  function setReverbConnected(on) {
+    if (on === reverbConnected || !reverbNode) return;
+    if (on) {
+      reverbHighpass.connect(reverbNode);
+      reverbNode.connect(audioCtx.destination);
+    } else {
+      try { reverbHighpass.disconnect(reverbNode); } catch (e) {}
+      try { reverbNode.disconnect(audioCtx.destination); } catch (e) {}
+    }
+    reverbConnected = on;
+  }
+
+  function applyReverbAmount(t) {
+    if (!reverbNode) return; // worklet module still loading — ensureReverb's .then() calls this again once it's ready
+    setReverbConnected(t > 0);
+    var wetT = t * t; // mix is a non-linear (quadratic) curve — more resolution low, dramatic near the top
+    reverbSendGain.gain.setTargetAtTime(wetT * REVERB_MAX_WET, audioCtx.currentTime, 0.03);
+    reverbNode.parameters.get('decay').setTargetAtTime(REVERB_MIN_DECAY + t * (REVERB_MAX_DECAY - REVERB_MIN_DECAY), audioCtx.currentTime, 0.05);
+  }
+
+  // ================= scheduler: audio-clock lookahead, never tied to rAF =================
+  var LOOKAHEAD = 0.15;
+  var SCHED_INTERVAL_MS = 40;
+  var SAFETY = 0.012;
+  var scheduledEvents = []; // {time (perf), node}
+
+  // Speed can be negative now (reverse), so the Newton step's denominator
+  // must stay away from zero *without* clobbering its sign — Math.max alone
+  // would silently force every reverse computation to a positive (wrong)
+  // slope.
+  function clampAwayZero(v) { return Math.abs(v) < 1e-4 ? (v < 0 ? -1e-4 : 1e-4) : v; }
+
+  function crossingTimeForTarget(target, nowPerf) {
+    var gNow = rotation.angleAt(nowPerf);
+    var vNow = clampAwayZero(rotation.speedAt(nowPerf));
+    var t = nowPerf + (target - gNow) / vNow;
+    for (var i = 0; i < 6; i++) {
+      var g = rotation.angleAt(t);
+      var v = clampAwayZero(rotation.speedAt(t));
+      t = t - (g - target) / v;
+    }
+    return t;
+  }
+
+  function scheduleCrossing(m, target, now) {
+    var t = crossingTimeForTarget(target, now);
+    // Newton's method / floating-point noise can land a crossing that's
+    // conceptually "right now" a hair before `now` — silently dropping
+    // anything t < now (rather than just t < now - SAFETY) is exactly what
+    // was eating triggers for minerals sitting right at the search boundary
+    // (near the zero mark at the moment scheduling starts, or right at a
+    // crossing when a ramp reset just fired). Clamp into the playable
+    // future instead of discarding.
+    if (t >= now - 0.01) {
+      var node = playMineralAt(m.mineralIndex, perfToAudio(Math.max(t, now)));
+      if (node) scheduledEvents.push({ time: Math.max(t, now), node: node });
+    }
+  }
+
+  // Direction-aware: forward, angle rises through the lookahead window and k
+  // searches upward from lastK; reverse, it falls and k searches downward.
+  // `lastK` is direction-agnostic bookkeeping — recalcSchedule clears it to
+  // undefined on every state change. But a reverse ramp doesn't flip
+  // direction instantly: it decelerates through zero over LONG_TAU, so the
+  // window's *net* direction (this tick's `forward`) can flip on its own,
+  // mid-ramp, with no recalcSchedule() called at that exact moment. Reusing
+  // lastK (built under the old direction's convention) across that flip is
+  // what was skipping a few crossings right at the transition, worse at
+  // higher speed since more crossings fall inside the transition window —
+  // so treat any change in `forward` since the last tick the same as an
+  // explicit recalc, for bookkeeping purposes only (already-queued audio is
+  // left alone; only the search-continuation state resets).
+  var schedulerLastForward = null;
+
+  function schedulerTick() {
+    if (!audioCtx) return;
+    var now = nowSec();
+    var windowEnd = now + LOOKAHEAD;
+    var gNow = rotation.angleAt(now);
+    var gEnd = rotation.angleAt(windowEnd);
+    var forward = gEnd >= gNow;
+    if (schedulerLastForward !== null && schedulerLastForward !== forward) {
+      for (var ri = 0; ri < disk.length; ri++) disk[ri].lastK = undefined;
+    }
+    schedulerLastForward = forward;
+    for (var i = 0; i < disk.length; i++) {
+      var m = disk[i];
+      if (m.muted) continue;
+      var base = mod2pi(-m.thetaOffset);
+      if (forward) {
+        var kMin = Math.ceil((gNow - base) / (2 * Math.PI));
+        var k = (m.lastK === undefined) ? kMin : Math.max(kMin, m.lastK + 1);
+        for (; ; k++) {
+          var target = base + k * 2 * Math.PI;
+          if (target > gEnd) break;
+          scheduleCrossing(m, target, now);
+          m.lastK = k;
+        }
+      } else {
+        var kMax = Math.floor((gNow - base) / (2 * Math.PI));
+        var k2 = (m.lastK === undefined) ? kMax : Math.min(kMax, m.lastK - 1);
+        for (; ; k2--) {
+          var target2 = base + k2 * 2 * Math.PI;
+          if (target2 < gEnd) break;
+          scheduleCrossing(m, target2, now);
+          m.lastK = k2;
+        }
+      }
+    }
+    if (scheduledEvents.length > 200) {
+      scheduledEvents = scheduledEvents.filter(function (e) { return e.time > now - 1; });
+    }
+  }
+
+  function recalcSchedule() {
+    if (!audioCtx) return;
+    var now = nowSec();
+    var kept = [];
+    for (var i = 0; i < scheduledEvents.length; i++) {
+      var ev = scheduledEvents[i];
+      if (ev.time > now + SAFETY) { try { ev.node.stop(0); } catch (e) {} }
+      else kept.push(ev);
+    }
+    scheduledEvents = kept;
+    for (var j = 0; j < disk.length; j++) disk[j].lastK = undefined;
+    // Wiping lastK here and leaving the refill to the next setInterval tick
+    // (up to SCHED_INTERVAL_MS away) was a real gap: recalcSchedule fires on
+    // every fader-drag pointermove with no throttling, so a fast, repeated
+    // drag could wipe a mineral's scheduled crossing and then have that
+    // exact crossing happen inside the gap before the timer got back around
+    // to it — by then gNow is already past it, so kMin silently excludes it
+    // as "already happened." Re-deriving immediately instead of waiting
+    // closes that window entirely.
+    schedulerTick();
+  }
+
+  // ================= controls =================
+  var playBtn = document.getElementById('playBtn');
+
+  playBtn.addEventListener('click', function () {
+    ensureAudio();
+    audioCtx.resume(); // safe to call unconditionally; actual playback is scheduled ~40ms later by schedulerTick, well after this resolves
+    var now = nowSec();
+    if (!isPlaying) {
+      rotation.startRamp(signedTarget(), LONG_TAU, now);
+      isPlaying = true;
+      playBtn.classList.add('playing');
+    } else {
+      rotation.startRamp(0, LONG_TAU, now);
+      isPlaying = false;
+      playBtn.classList.remove('playing');
+    }
+    recalcSchedule();
+  });
+
+  var reverseToggle = document.getElementById('reverseToggle');
+  function setReverse(v) {
+    reverseOn = v;
+    // 'on' class positions the knob at the top (shared with the side
+    // toggles); default/forward is meant to show "up", so it's applied for
+    // the *non*-reversed state here, inverted from how B/Q use it.
+    reverseToggle.classList.toggle('on', !v);
+    reverseToggle.setAttribute('aria-checked', v ? 'true' : 'false');
+    if (audioCtx && isPlaying) {
+      rotation.startRamp(signedTarget(), LONG_TAU, nowSec());
+      recalcSchedule();
+    }
+  }
+  setReverse(false);
+  reverseToggle.addEventListener('pointerdown', function (e) { e.preventDefault(); setReverse(!reverseOn); });
+  reverseToggle.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setReverse(!reverseOn); }
+  });
+
+  // ================= reverb panel — one knob drives send level and decay time together =================
+  var reverbBtn = document.getElementById('reverbBtn');
+  var reverbPanel = document.getElementById('reverbPanel');
+  var reverbPanelOutsideHandler = null;
+  var reverbFaderTrack = document.getElementById('reverbFaderTrack');
+  var reverbFaderThumb = document.getElementById('reverbFaderThumb');
+  var reverbAmount = 0; // 0..1, defaults to off
+
+  function applyReverbT(t) {
+    reverbAmount = Math.max(0, Math.min(1, t));
+    reverbFaderThumb.style.left = (reverbAmount * 100) + '%';
+    applyReverbAmount(reverbAmount);
+  }
+  applyReverbT(reverbAmount); // set once at load — opening/closing the panel never touches this again
+
+  function reverbXToT(clientX) {
+    var rect = reverbFaderTrack.getBoundingClientRect();
+    return (clientX - rect.left) / rect.width;
+  }
+
+  var reverbFaderDragging = false;
+  reverbFaderTrack.addEventListener('pointerdown', function (e) {
+    reverbFaderDragging = true;
+    reverbFaderTrack.setPointerCapture(e.pointerId);
+    applyReverbT(reverbXToT(e.clientX));
+  });
+  reverbFaderTrack.addEventListener('pointermove', function (e) {
+    if (reverbFaderDragging) applyReverbT(reverbXToT(e.clientX));
+  });
+  reverbFaderTrack.addEventListener('pointerup', function () { reverbFaderDragging = false; });
+  reverbFaderTrack.addEventListener('pointercancel', function () { reverbFaderDragging = false; });
+  reverbFaderTrack.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { applyReverbT(reverbAmount - 0.02); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { applyReverbT(reverbAmount + 0.02); e.preventDefault(); }
+  });
+
+  function openReverbPanel() {
+    ensureAudio();
+    audioCtx.resume();
+    ensureReverb();
+    reverbBtn.classList.add('open');
+    reverbBtn.setAttribute('aria-expanded', 'true');
+    reverbPanel.classList.add('open');
+    reverbPanelOutsideHandler = function (e) {
+      if (!reverbPanel.contains(e.target) && !reverbBtn.contains(e.target)) closeReverbPanel();
+    };
+    document.addEventListener('pointerdown', reverbPanelOutsideHandler);
+  }
+  function closeReverbPanel() {
+    reverbBtn.classList.remove('open');
+    reverbBtn.setAttribute('aria-expanded', 'false');
+    reverbPanel.classList.remove('open');
+    if (reverbPanelOutsideHandler) {
+      document.removeEventListener('pointerdown', reverbPanelOutsideHandler);
+      reverbPanelOutsideHandler = null;
+    }
+  }
+  reverbBtn.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    if (reverbBtn.classList.contains('open')) closeReverbPanel(); else openReverbPanel();
+  });
+
+  // ================= clear all — button + confirm dialog =================
+  var clearBtn = document.getElementById('clearBtn');
+  var clearConfirmEl = document.getElementById('clearConfirm');
+  var clearCancelBtn = document.getElementById('clearCancelBtn');
+  var clearClearBtn = document.getElementById('clearClearBtn');
+
+  function openClearConfirm() { clearConfirmEl.style.display = 'flex'; }
+  function closeClearConfirm() { clearConfirmEl.style.display = 'none'; }
+
+  clearBtn.addEventListener('pointerdown', function (e) { e.preventDefault(); openClearConfirm(); });
+  clearCancelBtn.addEventListener('pointerdown', function (e) { e.stopPropagation(); closeClearConfirm(); });
+  clearClearBtn.addEventListener('pointerdown', function (e) {
+    e.stopPropagation();
+    disk = [];
+    recalcSchedule();
+    closeClearConfirm();
+  });
+  clearConfirmEl.addEventListener('pointerdown', function (e) {
+    if (e.target === clearConfirmEl) closeClearConfirm(); // backdrop tap cancels too
+  });
+
+  var faderTrack = document.getElementById('faderTrack');
+  var faderThumb = document.getElementById('faderThumb');
+  var faderT = 0.502;
+
+  function applyFaderT(t, live) {
+    faderT = Math.max(0, Math.min(1, t));
+    faderThumb.style.left = (faderT * 100) + '%';
+    desiredSpeed = faderToSpeed(faderT);
+    if (live && audioCtx && isPlaying) {
+      rotation.startRamp(signedTarget(), SHORT_TAU, nowSec());
+      recalcSchedule();
+    }
+  }
+  applyFaderT(faderT, false);
+
+  function faderXToT(clientX) {
+    var rect = faderTrack.getBoundingClientRect();
+    return (clientX - rect.left) / rect.width;
+  }
+
+  var faderDragging = false;
+  faderTrack.addEventListener('pointerdown', function (e) {
+    faderDragging = true;
+    faderTrack.setPointerCapture(e.pointerId);
+    applyFaderT(faderXToT(e.clientX), true);
+  });
+  faderTrack.addEventListener('pointermove', function (e) {
+    if (faderDragging) applyFaderT(faderXToT(e.clientX), true);
+  });
+  faderTrack.addEventListener('pointerup', function () { faderDragging = false; });
+  faderTrack.addEventListener('pointercancel', function () { faderDragging = false; });
+  faderTrack.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowLeft') { applyFaderT(faderT - 0.02, true); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { applyFaderT(faderT + 0.02, true); e.preventDefault(); }
+  });
+
+  // ================= palette DOM + drag & drop =================
+  // Three gestures on a palette button, disambiguated by one pending state:
+  // tap (released before the long-press timer, barely moved) previews the
+  // sound; drag (moved past a tiny threshold before the timer) is today's
+  // placement flow; long-press (timer fires first) opens the number menu.
+  var LONGPRESS_MS = 600;
+  var TAP_MOVE_THRESHOLD = 4; // px — filters finger tremor, not a deliberate drag
+  var pending = null; // {mineralIndex, btnEl, startX, startY, longPressFired, timer}
+
+  function triggerLongPress(p) {
+    if (!pending || pending !== p) return; // already resolved into a tap or a drag
+    pending.longPressFired = true;
+    openNumberMenu(p.mineralIndex, p.btnEl);
+  }
+
+  // Palette is a 2x11 grid (22 minerals) windowed to however many columns
+  // fit the screen at a fixed button size — top row 1-11, bottom row 12-22,
+  // aligned into columns. Slid horizontally from anywhere on the palette,
+  // buttons included.
+  var PALETTE_BTN = 50, PALETTE_GAP = 14, PALETTE_COLS_TOTAL = 11;
+  var paletteEl = document.getElementById('palette');
+  var paletteViewportEl = document.getElementById('paletteViewport');
+  var paletteTrackEl = document.getElementById('paletteTrack');
+  var paletteScrollbarThumb = document.getElementById('paletteScrollbarThumb');
+  var paletteMaxOffset = 0;
+  var paletteOffset = 0;
+  var paletteSlide = null; // {startX, startOffset} — set by either a button or the bare background
+
+  function setPaletteOffset(px) {
+    paletteOffset = Math.max(0, Math.min(paletteMaxOffset, px));
+    paletteTrackEl.style.transform = 'translateX(-' + paletteOffset + 'px)';
+    var barWidth = paletteScrollbarThumb.parentElement.clientWidth;
+    var vw = paletteViewportEl.clientWidth;
+    var trackWidth = vw + paletteMaxOffset;
+    var thumbFrac = trackWidth > 0 ? Math.min(1, vw / trackWidth) : 1;
+    var thumbW = barWidth * thumbFrac;
+    var thumbX = paletteMaxOffset > 0 ? (paletteOffset / paletteMaxOffset) * (barWidth - thumbW) : 0;
+    paletteScrollbarThumb.style.width = thumbW + 'px';
+    paletteScrollbarThumb.style.left = thumbX + 'px';
+  }
+
+  // #paletteViewport's own 10px side padding (CSS) is what gives the track
+  // its resting left inset — but that same padding was never added back on
+  // the far end, so max-scroll landed exactly where it would with no
+  // padding at all: the last 10px of track (the tail of the last button)
+  // sat past the clip edge, never scrollable into view. Widening the range
+  // by both paddings makes the end symmetric with the start — a matching
+  // clearance, not a clip.
+  var PALETTE_VIEWPORT_PAD = 10; // keep in sync with #paletteViewport's CSS padding
+  function updatePaletteSizing() {
+    var vw = paletteViewportEl.clientWidth;
+    if (vw < 50) return; // not laid out yet
+    var trackWidth = PALETTE_COLS_TOTAL * PALETTE_BTN + (PALETTE_COLS_TOTAL - 1) * PALETTE_GAP;
+    paletteTrackEl.style.width = trackWidth + 'px';
+    paletteMaxOffset = Math.max(0, trackWidth - vw + PALETTE_VIEWPORT_PAD * 2);
+    setPaletteOffset(paletteOffset); // re-clamp against the new max
+  }
+  var paletteRO = new ResizeObserver(function () { updatePaletteSizing(); });
+  paletteRO.observe(paletteViewportEl);
+  updatePaletteSizing();
+
+  // Bare background (the gaps, not a specific button) just slides the palette.
+  paletteViewportEl.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('.mineralBtn')) return; // a button's own listeners handle that
+    paletteViewportEl.setPointerCapture(e.pointerId);
+    paletteSlide = { startX: e.clientX, startOffset: paletteOffset };
+  });
+  paletteViewportEl.addEventListener('pointermove', function (e) {
+    if (paletteSlide) setPaletteOffset(paletteSlide.startOffset - (e.clientX - paletteSlide.startX));
+  });
+  paletteViewportEl.addEventListener('pointerup', function () { paletteSlide = null; });
+  paletteViewportEl.addEventListener('pointercancel', function () { paletteSlide = null; });
+
+  // The scrollbar thumb itself is also directly draggable (mainly a desktop
+  // affordance — a real scrollbar habit) with a tight, un-padded hit zone:
+  // just the thumb's own rendered box, nothing enlarged around it.
+  var scrollbarDrag = null; // {startX, startOffset}
+  paletteScrollbarThumb.addEventListener('pointerdown', function (e) {
+    e.stopPropagation();
+    paletteScrollbarThumb.setPointerCapture(e.pointerId);
+    scrollbarDrag = { startX: e.clientX, startOffset: paletteOffset };
+  });
+  paletteScrollbarThumb.addEventListener('pointermove', function (e) {
+    if (!scrollbarDrag) return;
+    var barWidth = paletteScrollbarThumb.parentElement.clientWidth;
+    var vw = paletteViewportEl.clientWidth;
+    var trackWidth = vw + paletteMaxOffset;
+    var thumbFrac = trackWidth > 0 ? Math.min(1, vw / trackWidth) : 1;
+    var usableBar = Math.max(1, barWidth - barWidth * thumbFrac);
+    var dx = e.clientX - scrollbarDrag.startX;
+    setPaletteOffset(scrollbarDrag.startOffset + (dx / usableBar) * paletteMaxOffset);
+  });
+  paletteScrollbarThumb.addEventListener('pointerup', function () { scrollbarDrag = null; });
+  paletteScrollbarThumb.addEventListener('pointercancel', function () { scrollbarDrag = null; });
+
+  var paletteRowTop = document.getElementById('paletteRowTop');
+  var paletteRowBottom = document.getElementById('paletteRowBottom');
+  MINERALS.forEach(function (slot, idx) {
+    var btn = document.createElement('div');
+    btn.className = 'mineralBtn';
+    btn.style.backgroundImage = 'url(minerals/' + slot.num + '.webp)';
+    btn.setAttribute('role', 'button');
+    btn.setAttribute('aria-label', 'mineral ' + slot.num);
+    (idx < 11 ? paletteRowTop : paletteRowBottom).appendChild(btn);
+    slot.btnEl = btn;
+
+    btn.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      btn.setPointerCapture(e.pointerId);
+      pending = {
+        mineralIndex: idx, btnEl: btn, startX: e.clientX, startY: e.clientY,
+        longPressFired: false, timer: null, startOffset: paletteOffset
+      };
+      pending.timer = setTimeout(function () { triggerLongPress(pending); }, LONGPRESS_MS);
+    });
+    btn.addEventListener('pointermove', function (e) {
+      if (pending && pending.mineralIndex === idx && !pending.longPressFired) {
+        var dx = e.clientX - pending.startX, dy = e.clientY - pending.startY;
+        if (Math.abs(dx) > TAP_MOVE_THRESHOLD && Math.abs(dx) >= Math.abs(dy)) {
+          // predominantly sideways — sliding the palette, not dragging to the disc
+          clearTimeout(pending.timer);
+          paletteSlide = { startX: pending.startX, startOffset: pending.startOffset };
+          pending = null;
+          setPaletteOffset(paletteSlide.startOffset - (e.clientX - paletteSlide.startX));
+        } else if (Math.hypot(dx, dy) > TAP_MOVE_THRESHOLD) {
+          clearTimeout(pending.timer);
+          pending = null;
+          drag = { mode: 'new', mineralIndex: idx, x: e.clientX, y: e.clientY, valid: false, caught: false };
+        }
+      } else if (paletteSlide) {
+        setPaletteOffset(paletteSlide.startOffset - (e.clientX - paletteSlide.startX));
+      } else if (drag && drag.mode === 'new' && drag.mineralIndex === idx) {
+        drag.x = e.clientX; drag.y = e.clientY;
+        drag.valid = evalDrop(drag.x, drag.y).valid;
+        drag.caught = isNearQuantLine(drag.x, drag.y);
+      }
+    });
+    btn.addEventListener('pointerup', function () {
+      if (paletteSlide) { paletteSlide = null; return; }
+      if (pending && pending.mineralIndex === idx) {
+        clearTimeout(pending.timer);
+        var firedLongPress = pending.longPressFired;
+        pending = null;
+        if (!firedLongPress) {
+          ensureAudio();
+          // resume() is async — starting playback before it actually
+          // resolves can silently drop the very first tap's sound.
+          Promise.resolve(audioCtx.resume()).then(function () {
+            playMineralAt(idx, audioCtx.currentTime);
+          });
+          btn.classList.add('flash');
+          void btn.offsetWidth;
+          btn.classList.remove('flash');
+        }
+      } else if (drag && drag.mode === 'new' && drag.mineralIndex === idx) {
+        finishDrag();
+      }
+    });
+    btn.addEventListener('pointercancel', function () {
+      if (pending && pending.mineralIndex === idx) { clearTimeout(pending.timer); pending = null; }
+      if (drag && drag.mode === 'new' && drag.mineralIndex === idx) drag = null;
+      paletteSlide = null;
+    });
+  });
+
+  // ================= long-press number menu: Euclidean scatter =================
+  var numberMenuEl = document.getElementById('numberMenu');
+  var numberMenuMineralIdx = -1;
+  var numberMenuOutsideHandler = null;
+
+  function flashThenClose(item) {
+    item.classList.add('flash');
+    void item.offsetWidth; // force the instant gold to paint before fading it back out
+    item.classList.remove('flash');
+    setTimeout(closeNumberMenu, 400);
+  }
+
+  function openNumberMenu(mineralIdx, anchorEl) {
+    numberMenuMineralIdx = mineralIdx;
+    numberMenuEl.innerHTML = '';
+    // 16 at the top, 1 at the bottom, with a clear ("x") option below 1.
+    for (var n = QUANT_STEPS; n >= 1; n--) {
+      var item = document.createElement('div');
+      item.className = 'numberMenuItem';
+      item.textContent = String(n);
+      (function (count, el) {
+        el.addEventListener('pointerdown', function (e) {
+          e.stopPropagation();
+          e.preventDefault();
+          placeEuclidean(numberMenuMineralIdx, count);
+          flashThenClose(el);
+        });
+      })(n, item);
+      numberMenuEl.appendChild(item);
+    }
+    var clearItem = document.createElement('div');
+    clearItem.className = 'numberMenuItem clearItem';
+    clearItem.textContent = '✕';
+    clearItem.setAttribute('aria-label', 'Clear');
+    clearItem.addEventListener('pointerdown', function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      clearMultiplierForMineral(numberMenuMineralIdx);
+      flashThenClose(clearItem);
+    });
+    numberMenuEl.appendChild(clearItem);
+
+    numberMenuEl.style.display = 'flex';
+    var rect = anchorEl.getBoundingClientRect();
+    var menuW = numberMenuEl.offsetWidth, menuH = numberMenuEl.offsetHeight;
+    var left = Math.max(6, Math.min(rect.left + rect.width / 2 - menuW / 2, window.innerWidth - menuW - 6));
+    var top = Math.max(6, rect.top - menuH - 8);
+    numberMenuEl.style.left = left + 'px';
+    numberMenuEl.style.top = top + 'px';
+
+    numberMenuOutsideHandler = function (e) {
+      if (!numberMenuEl.contains(e.target)) closeNumberMenu();
+    };
+    document.addEventListener('pointerdown', numberMenuOutsideHandler);
+  }
+
+  function closeNumberMenu() {
+    numberMenuEl.style.display = 'none';
+    numberMenuEl.innerHTML = '';
+    numberMenuMineralIdx = -1;
+    if (numberMenuOutsideHandler) {
+      document.removeEventListener('pointerdown', numberMenuOutsideHandler);
+      numberMenuOutsideHandler = null;
+    }
+  }
+
+  // Multiplier-placed stones are tagged so a re-pick for the same mineral
+  // replaces them instead of piling more on, and the menu's "x" can clear
+  // just this mineral's multiplier set without touching anything hand-placed.
+  function removeMultiplierPlaced(mineralIdx) {
+    disk = disk.filter(function (m) { return !(m.mineralIndex === mineralIdx && m.viaMultiplier); });
+  }
+  function clearMultiplierForMineral(mineralIdx) {
+    removeMultiplierPlaced(mineralIdx);
+    recalcSchedule();
+  }
+
+  // Evenly spread n copies of a mineral around the disc, continuous (not
+  // snapped to the 16-slot grid) — only i=0 lands exactly on the zero mark,
+  // the rest just divide the circle evenly. Each copy's visual spin starts
+  // at its own random orientation (independent of its position, which stays
+  // exactly evenly spaced) rather than all of them looking upright together.
+  function placeEuclidean(mineralIdx, n) {
+    removeMultiplierPlaced(mineralIdx);
+    var gNow = rotation.angleAt(nowSec());
+    for (var i = 0; i < n; i++) {
+      var thetaOffset = mod2pi(i * (2 * Math.PI / n));
+      var radiusFrac = resolveLineRadius(thetaOffset, 0.6, -1);
+      var rotBase = gNow - Math.random() * 2 * Math.PI;
+      disk.push({ id: uid(), mineralIndex: mineralIdx, thetaOffset: thetaOffset, radiusFrac: radiusFrac,
+                  rotBase: rotBase, muted: false, lastK: undefined, prevPhase: 0, flashUntil: -1,
+                  viaMultiplier: true });
+    }
+    recalcSchedule();
+  }
+
+  var drag = null; // {mode:'new'|'move', mineralIndex, x, y, valid}
+  var ghost = null; // transient reject animation: {mode:'snapback'|'return', ...}
+  var GHOST_DUR = 0.22;
+
+  // Grabbing the handle: stopped, it's a free dial — the disc tracks the
+  // finger 1:1. Playing, it's a DJ jog wheel — touch takes over the angle
+  // (in whatever direction you turn it) and letting go ramps back up to
+  // signedTarget(), same physics as a play/pause toggle. Either way the
+  // angle is applied as an incremental per-move delta (signedAngDiff), never
+  // an absolute snap-to-finger, so a multi-revolution drag never jumps at
+  // the 2*PI wrap.
+  var handleDrag = null; // {lastAngle}
+
+  canvas.addEventListener('pointerdown', function (e) {
+    var hit = hitTestMineral(e.clientX, e.clientY);
+    if (hit !== -1) {
+      canvas.setPointerCapture(e.pointerId);
+      disk[hit].muted = true;
+      drag = { mode: 'move', mineralIndex: hit, x: e.clientX, y: e.clientY, willDelete: false };
+      return;
+    }
+    if (hitTestHandle(e.clientX, e.clientY)) {
+      canvas.setPointerCapture(e.pointerId);
+      ensureAudio();
+      audioCtx.resume(); // same unlock as playBtn — grabbing the handle is a playback gesture too
+      handleDrag = { lastAngle: pointerWorldAngle(e.clientX, e.clientY) };
+    }
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (drag && drag.mode === 'move') {
+      drag.x = e.clientX; drag.y = e.clientY;
+      var ev = evalDrop(drag.x, drag.y);
+      drag.willDelete = ev.radiusFrac > 1.02; // past the rim — release here deletes it, not just a snap-back
+      return;
+    }
+    if (handleDrag) {
+      var ang = pointerWorldAngle(e.clientX, e.clientY);
+      var delta = signedAngDiff(handleDrag.lastAngle, ang);
+      handleDrag.lastAngle = ang;
+      var now = nowSec();
+      var oldG = rotation.angleAt(now);
+      var newG = oldG + delta;
+      rotation.setAngleNow(newG, now);
+      if (isPlaying) recalcSchedule();
+      // Scratch triggers sound too — the lookahead scheduler predicts
+      // crossings from the smooth ramp function, which reads zero velocity
+      // while the disc is being hand-turned in discrete jumps, so it never
+      // fires on its own here. Detect a wrap directly (same test the
+      // flash-on-crossing visual already uses) and play it immediately.
+      if (audioCtx) {
+        for (var hi = 0; hi < disk.length; hi++) {
+          var hm = disk[hi];
+          if (hm.muted) continue;
+          var oldPhase = mod2pi(oldG + hm.thetaOffset);
+          var newPhase = mod2pi(newG + hm.thetaOffset);
+          if (Math.abs(oldPhase - newPhase) > Math.PI) playMineralAt(hm.mineralIndex, audioCtx.currentTime);
+        }
+      }
+    }
+  });
+  canvas.addEventListener('pointerup', function () {
+    if (drag && drag.mode === 'move') { finishDrag(); return; }
+    if (handleDrag) {
+      handleDrag = null;
+      if (isPlaying && audioCtx) { rotation.setSpeedNow(signedTarget(), nowSec()); recalcSchedule(); }
+    }
+  });
+  canvas.addEventListener('pointercancel', function () {
+    if (drag && drag.mode === 'move') disk[drag.mineralIndex].muted = false;
+    drag = null;
+    if (handleDrag) {
+      handleDrag = null;
+      if (isPlaying && audioCtx) { rotation.setSpeedNow(signedTarget(), nowSec()); recalcSchedule(); }
+    }
+  });
+
+  function returnToPalette(paletteIndex, fromX, fromY) {
+    var slot = MINERALS[paletteIndex];
+    var btnRect = slot.btnEl.getBoundingClientRect();
+    ghost = { mode: 'return', num: slot.num, x: fromX, y: fromY,
+              toX: btnRect.left + btnRect.width / 2, toY: btnRect.top + btnRect.height / 2, start: nowSec() };
+  }
+
+  function rejectDrag() {
+    // dead-zone (or any other non-outside-rim) reject: still on/over the
+    // disc, so it snaps back to wherever it already was.
+    if (drag.mode === 'move') {
+      disk[drag.mineralIndex].muted = false;
+      ghost = { mode: 'snapback', mineralIndex: drag.mineralIndex, x: drag.x, y: drag.y, start: nowSec() };
+    } else {
+      returnToPalette(drag.mineralIndex, drag.x, drag.y);
+    }
+    drag = null;
+  }
+
+  // Dragging an existing mineral off the disc entirely (past the rim, not
+  // just into the dead zone) removes it from the disc — it flies back to
+  // its palette source, same as a rejected brand-new placement.
+  function removeDraggedMineral() {
+    var diskIdx = drag.mineralIndex;
+    var paletteIdx = disk[diskIdx].mineralIndex;
+    var fromX = drag.x, fromY = drag.y;
+    disk.splice(diskIdx, 1);
+    recalcSchedule(); // cancels/drops the removed stone's own pending scheduled audio too
+    returnToPalette(paletteIdx, fromX, fromY);
+    drag = null;
+  }
+
+  function commitDrop(thetaOffset, radiusFrac) {
+    // rotBase: the disc's own angle at the exact moment this stone was set
+    // down. The image is drawn upright relative to that snapshot (not to
+    // thetaOffset) — it keeps whatever orientation it had while being
+    // carried (upright, same as the palette icon) and only spins by however
+    // much the disc turns *after* being placed. No jump at drop, because
+    // "upright" is already what the drag preview showed the whole time.
+    var rotBase = rotation.angleAt(nowSec());
+    if (drag.mode === 'new') {
+      disk.push({ id: uid(), mineralIndex: drag.mineralIndex, thetaOffset: thetaOffset, radiusFrac: radiusFrac,
+                  rotBase: rotBase, muted: false, lastK: undefined, prevPhase: 0, flashUntil: -1 });
+      ghost = { mode: 'snapback', mineralIndex: disk.length - 1, x: drag.x, y: drag.y, start: nowSec() };
+    } else {
+      var m = disk[drag.mineralIndex];
+      m.thetaOffset = thetaOffset; m.radiusFrac = radiusFrac; m.rotBase = rotBase; m.muted = false;
+      ghost = { mode: 'snapback', mineralIndex: drag.mineralIndex, x: drag.x, y: drag.y, start: nowSec() };
+    }
+    recalcSchedule();
+    drag = null;
+  }
+
+  function finishDrag() {
+    var ev = evalDrop(drag.x, drag.y);
+    if (!ev.valid) {
+      if (drag.mode === 'move' && ev.radiusFrac > 1.02) { removeDraggedMineral(); return; }
+      rejectDrag();
+      return;
+    }
+
+    var now = nowSec();
+    var diskZero = rotation.angleAt(now);
+    var thetaOffset = mod2pi(ev.worldAngle - diskZero);
+    var radiusFrac = Math.max(0.22, Math.min(0.92, ev.radiusFrac));
+    var excludeIdx = drag.mode === 'move' ? drag.mineralIndex : -1;
+
+    if (quantizeOn) {
+      var step = 2 * Math.PI / QUANT_STEPS;
+      thetaOffset = mod2pi(Math.round(thetaOffset / step) * step);
+      radiusFrac = resolveLineRadius(thetaOffset, radiusFrac, excludeIdx);
+      commitDrop(thetaOffset, radiusFrac);
+      return;
+    }
+
+    // freeform: dropping close to an existing stone nudges just beside it
+    // instead of rejecting the drop outright
+    var Rcss = diskRadiusCss();
+    var nearestDist = Infinity, nearestIdx = -1;
+    for (var i = 0; i < disk.length; i++) {
+      if (i === excludeIdx) continue;
+      var other = disk[i];
+      var oWorld = mod2pi(diskZero + other.thetaOffset);
+      var ox = canvasRect.left + cssW / 2 + other.radiusFrac * Rcss * Math.sin(oWorld);
+      var oy = canvasRect.top + cssH / 2 - other.radiusFrac * Rcss * Math.cos(oWorld);
+      var d = Math.hypot(ox - drag.x, oy - drag.y);
+      if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
+    }
+    if (nearestIdx !== -1 && nearestDist < ASSIST_FRAC * Rcss) {
+      var otherTheta = disk[nearestIdx].thetaOffset;
+      var plus = mod2pi(otherTheta + NUDGE_ANGLE);
+      var minus = mod2pi(otherTheta - NUDGE_ANGLE);
+      thetaOffset = angDist(plus, thetaOffset) <= angDist(minus, thetaOffset) ? plus : minus;
+      for (var j = 0; j < disk.length; j++) {
+        if (j === excludeIdx) continue;
+        var arcDist = angDist(disk[j].thetaOffset, thetaOffset) * Math.max(radiusFrac, disk[j].radiusFrac) * Rcss;
+        if (arcDist < COLLISION_FRAC * Rcss * 0.9) { rejectDrag(); return; }
+      }
+    }
+    commitDrop(thetaOffset, radiusFrac);
+  }
+
+  // ================= render loop: sole source of truth for anything visual =================
+  // Photos have transparent padding baked in around the irregular stone
+  // silhouette, so they're scaled up a bit to read at roughly the same size
+  // the old flat dots did. Falls back to the flat color dot while an image
+  // hasn't loaded yet (or is missing), same as the audio-side fallback.
+  var MINERAL_IMG_SCALE = 1.6;
+  function drawMineralImage(img, cx2, cy2, boxSize) {
+    if (!img || !img.complete || !img.naturalWidth) return false;
+    var target = boxSize * MINERAL_IMG_SCALE;
+    var scale = Math.min(target / img.naturalWidth, target / img.naturalHeight);
+    var dw = img.naturalWidth * scale, dh = img.naturalHeight * scale;
+    ctx2d.drawImage(img, cx2 - dw / 2, cy2 - dh / 2, dw, dh);
+    return true;
+  }
+
+  var dragGhostEl = document.getElementById('dragGhost');
+  function updateDragGhostEl(now) {
+    if (drag && drag.mode === 'new') {
+      dragGhostEl.style.display = 'block';
+      dragGhostEl.style.left = drag.x + 'px';
+      dragGhostEl.style.top = drag.y + 'px';
+      dragGhostEl.style.opacity = '1';
+      dragGhostEl.style.backgroundImage = 'url(minerals/' + MINERALS[drag.mineralIndex].num + '.webp)';
+      dragGhostEl.className = !drag.valid ? 'invalid' : (drag.caught ? 'caught' : 'valid');
+    } else if (ghost && ghost.mode === 'return') {
+      var tf = Math.min(1, (now - ghost.start) / GHOST_DUR);
+      var ease2 = 1 - Math.pow(1 - tf, 2);
+      dragGhostEl.style.display = 'block';
+      dragGhostEl.style.left = (ghost.x + (ghost.toX - ghost.x) * ease2) + 'px';
+      dragGhostEl.style.top = (ghost.y + (ghost.toY - ghost.y) * ease2) + 'px';
+      dragGhostEl.style.opacity = String(1 - tf * 0.3);
+      dragGhostEl.style.backgroundImage = 'url(minerals/' + ghost.num + '.webp)';
+      dragGhostEl.className = 'valid';
+      if (tf >= 1) { ghost = null; dragGhostEl.style.display = 'none'; }
+    } else {
+      dragGhostEl.style.display = 'none';
+    }
+  }
+
+  function draw() {
+    var w = canvas.width, h = canvas.height;
+    if (!w || !h) { requestAnimationFrame(draw); return; }
+    ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx2d.clearRect(0, 0, cssW, cssH);
+
+    var cx = cssW / 2, cy = cssH / 2;
+    var R = diskRadiusCss();
+    var now = nowSec();
+    var gRaw = rotation.angleAt(now);
+    var diskAngle = mod2pi(gRaw);
+
+    // disk body — flat brown vinyl, no gradient
+    ctx2d.fillStyle = THEME.vinyl;
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, R, 0, Math.PI * 2); ctx2d.fill();
+
+    ctx2d.strokeStyle = 'rgba(0,0,0,0.22)'; ctx2d.lineWidth = 1;
+    for (var gr = 1; gr <= 6; gr++) {
+      ctx2d.beginPath(); ctx2d.arc(cx, cy, R * (gr / 7), 0, Math.PI * 2); ctx2d.stroke();
+    }
+
+    // gold rim — thin
+    ctx2d.lineWidth = Math.max(0.5, R * 0.007 - 1); ctx2d.strokeStyle = THEME.gold;
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, R - ctx2d.lineWidth / 2, 0, Math.PI * 2); ctx2d.stroke();
+
+    // dead zone ring — gold, like a record label boundary, same thickness as the outer rim
+    ctx2d.lineWidth = Math.max(0.5, R * 0.007 - 1); ctx2d.strokeStyle = THEME.gold;
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, R * DEAD_ZONE, 0, Math.PI * 2); ctx2d.stroke();
+
+    // quantize grid — always present (like the grooves), gold only while quantize is on
+    ctx2d.save(); ctx2d.translate(cx, cy); ctx2d.rotate(diskAngle);
+    ctx2d.strokeStyle = quantizeOn ? COLOR_QUANT_GRID_ON : COLOR_QUANT_GRID_OFF;
+    ctx2d.lineWidth = 1;
+    for (var qi = 0; qi < QUANT_STEPS; qi++) {
+      var qa = qi * (2 * Math.PI / QUANT_STEPS);
+      ctx2d.beginPath();
+      ctx2d.moveTo(R * DEAD_ZONE * Math.sin(qa), -R * DEAD_ZONE * Math.cos(qa));
+      ctx2d.lineTo(R * Math.sin(qa), -R * Math.cos(qa));
+      ctx2d.stroke();
+    }
+    // cardinal markers — a small dot at the midpoint of the 0/4/8/12 lines (every 90°)
+    ctx2d.fillStyle = quantizeOn ? COLOR_QUANT_GRID_ON : COLOR_QUANT_GRID_OFF;
+    var cardMidR = R * (DEAD_ZONE + 1) / 2;
+    var cardDotR = Math.max(1.5, R * 0.012);
+    for (var qc = 0; qc < QUANT_STEPS; qc += 4) {
+      var qca = qc * (2 * Math.PI / QUANT_STEPS);
+      ctx2d.beginPath();
+      ctx2d.arc(cardMidR * Math.sin(qca), -cardMidR * Math.cos(qca), cardDotR, 0, Math.PI * 2);
+      ctx2d.fill();
+    }
+
+    // handle — a small lever reaching from the hub out past the dead zone
+    // edge, aligned with the zero mark direction so it reads as the grip
+    // that spins the disc. Its mounting ring is centered on the true disc
+    // center (0,0) — the black center hub drawn later, in world space, sits
+    // inside it like a pin through the ring's eye.
+    var hg = handleGeom(R);
+    var hRingOuterR = hg.hRingOuterR, hRingHoleR = hg.hRingHoleR;
+    var hKnobCy = hg.hKnobCy, hKnobOuterR = hg.hKnobOuterR, hKnobDotR = hg.hKnobDotR;
+    var hShaftHalfW = hg.hShaftHalfW, hShaftFrom = hg.hShaftFrom, hShaftTo = hg.hShaftTo;
+
+    ctx2d.fillStyle = THEME.inkDim;
+    ctx2d.fillRect(-hShaftHalfW, -hShaftTo, hShaftHalfW * 2, hShaftTo - hShaftFrom);
+
+    ctx2d.beginPath(); ctx2d.arc(0, 0, hRingOuterR, 0, Math.PI * 2);
+    ctx2d.fillStyle = THEME.inkDim; ctx2d.fill();
+    ctx2d.beginPath(); ctx2d.arc(0, 0, hRingHoleR, 0, Math.PI * 2);
+    ctx2d.fillStyle = THEME.vinyl; ctx2d.fill();
+
+    // grey outline ring behind the knob — a slightly larger circle showing
+    // as a border around it.
+    ctx2d.beginPath(); ctx2d.arc(0, -hKnobCy, hKnobOuterR * 1.18, 0, Math.PI * 2);
+    ctx2d.fillStyle = THEME.inkDim; ctx2d.fill();
+    ctx2d.beginPath(); ctx2d.arc(0, -hKnobCy, hKnobOuterR, 0, Math.PI * 2);
+    ctx2d.fillStyle = THEME.edge; ctx2d.fill();
+    ctx2d.beginPath(); ctx2d.arc(0, -hKnobCy, hKnobDotR, 0, Math.PI * 2);
+    ctx2d.fillStyle = THEME.inkDim; ctx2d.fill();
+
+    // zero mark — now printed straight onto the handle's shaft, like a
+    // black decal, instead of standing alone in the dead zone. Back edge is
+    // notched with the same point shape as the tip, like a real arrowhead.
+    var stickerHalfW = hShaftHalfW * 0.4;
+    var stickerMid = (hShaftFrom + hShaftTo) / 2, stickerLen = (hShaftTo - hShaftFrom) * 0.55;
+    var stickerR0 = stickerMid - stickerLen / 2, stickerR1 = stickerMid + stickerLen / 2;
+    var stickerNotch = (stickerR1 - stickerR0) * 0.35;
+    ctx2d.beginPath();
+    ctx2d.moveTo(0, -stickerR1);
+    ctx2d.lineTo(stickerHalfW, -stickerR0);
+    ctx2d.lineTo(0, -(stickerR0 + stickerNotch));
+    ctx2d.lineTo(-stickerHalfW, -stickerR0);
+    ctx2d.closePath();
+    ctx2d.fillStyle = THEME.bg;
+    ctx2d.fill();
+
+    ctx2d.restore();
+
+    // minerals
+    for (var i = 0; i < disk.length; i++) {
+      var m = disk[i];
+      var isDragMove = drag && drag.mode === 'move' && drag.mineralIndex === i;
+      var isSnap = ghost && ghost.mode === 'snapback' && ghost.mineralIndex === i;
+      var px, py;
+      var world = mod2pi(gRaw + m.thetaOffset);
+      var trueX = cx + m.radiusFrac * R * Math.sin(world);
+      var trueY = cy - m.radiusFrac * R * Math.cos(world);
+
+      var flashing = false;
+      if (!m.muted) {
+        var phase = mod2pi(gRaw + m.thetaOffset);
+        // abs() because a wrap looks like a big jump either way depending on
+        // direction — forward wraps ~2pi down to ~0, reverse wraps ~0 up to ~2pi.
+        if (Math.abs(m.prevPhase - phase) > Math.PI) m.flashUntil = now + 0.14;
+        m.prevPhase = phase;
+        flashing = now < m.flashUntil;
+      }
+
+      if (isDragMove) {
+        px = drag.x - canvasRect.left; py = drag.y - canvasRect.top;
+      } else if (isSnap) {
+        var t = Math.min(1, (now - ghost.start) / GHOST_DUR);
+        var ease = 1 - (1 - t) * (1 - t);
+        var fromX = ghost.x - canvasRect.left, fromY = ghost.y - canvasRect.top;
+        px = fromX + (trueX - fromX) * ease;
+        py = fromY + (trueY - fromY) * ease;
+        if (t >= 1) ghost = null;
+      } else {
+        px = trueX; py = trueY;
+      }
+
+      var slot = MINERALS[m.mineralIndex];
+      var lifted = isDragMove;
+      var willDelete = isDragMove && drag.willDelete;
+      var dotR = R * (flashing ? 0.075 : lifted ? 0.07 : MINERAL_DOT_FRAC);
+      ctx2d.globalAlpha = lifted ? 0.85 : (m.muted ? 0.4 : 1);
+      // shadowBlur is a real per-draw cost on some mobile canvas backends —
+      // only pay for it while there's an actual glow to show. Dragged past
+      // the rim (about to be deleted, not just repositioned) it glows red
+      // instead of the mineral's own color — a clear "letting go removes it" cue.
+      if (flashing || lifted) {
+        ctx2d.shadowColor = willDelete ? THEME.danger : slot.color;
+        ctx2d.shadowBlur = flashing ? 24 : 14;
+      }
+
+      // Spin by however much the disc has turned since this stone was set
+      // down (gRaw - rotBase), not by its absolute disc position — it keeps
+      // whatever orientation it had while being carried. Lifted (mid-reposition)
+      // it's off the disc entirely and stays upright.
+      ctx2d.save();
+      ctx2d.translate(px, py);
+      if (!lifted) ctx2d.rotate(gRaw - m.rotBase);
+      if (!drawMineralImage(slot.img, 0, 0, dotR * 2)) {
+        ctx2d.beginPath(); ctx2d.fillStyle = slot.color; ctx2d.arc(0, 0, dotR, 0, Math.PI * 2); ctx2d.fill();
+        ctx2d.lineWidth = 2; ctx2d.strokeStyle = THEME.edge; ctx2d.shadowBlur = 0;
+        ctx2d.beginPath(); ctx2d.arc(0, 0, dotR, 0, Math.PI * 2); ctx2d.stroke();
+      }
+      ctx2d.restore();
+      ctx2d.shadowBlur = 0;
+      ctx2d.globalAlpha = 1;
+    }
+
+    // dragged-from-palette preview lives in the #dragGhost DOM element (see
+    // below), not on canvas — canvas is clipped to discWrap and can't render
+    // above the palette panel while the ghost is still over it.
+    updateDragGhostEl(now);
+
+    // center hub — black dot
+    ctx2d.fillStyle = THEME.bg;
+    ctx2d.beginPath(); ctx2d.arc(cx, cy, R * 0.02, 0, Math.PI * 2); ctx2d.fill();
+
+    // fixed playhead marker (world space, angle 0 = top, never rotates) —
+    // a counterpart arrow to the zero mark, pointing inward, shorter and wider
+    var anyFlash = false;
+    for (var fi = 0; fi < disk.length; fi++) { if (now < disk[fi].flashUntil) { anyFlash = true; break; } }
+    var phHalfAngle = ((16 / 6) * Math.PI / 180) / 2;
+    var phBase = R * 1.055, phTip = R * 1.02;
+    ctx2d.beginPath();
+    ctx2d.moveTo(cx + phBase * Math.sin(-phHalfAngle), cy - phBase * Math.cos(-phHalfAngle));
+    ctx2d.lineTo(cx + phBase * Math.sin(phHalfAngle), cy - phBase * Math.cos(phHalfAngle));
+    ctx2d.lineTo(cx, cy - phTip);
+    ctx2d.closePath();
+    ctx2d.fillStyle = anyFlash ? THEME.gold : COLOR_PLAYHEAD_DIM;
+    ctx2d.fill();
+
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>
