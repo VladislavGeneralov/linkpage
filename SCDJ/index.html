@@ -71,6 +71,17 @@
   .settings-panel .save{align-self:flex-end; padding:6px 14px; font-size:12px;}
   .settings-note{font-size:10px; color:var(--muted); line-height:1.4;}
 
+  /* Shown if the AudioContext gets fully closed (not just suspended) by the
+     OS after a long time backgrounded — rebuilding the whole audio graph
+     live isn't worth it, so this just asks for a reload instead. */
+  .refresh-overlay{
+    position:fixed; inset:0; z-index:9999; background:rgba(17,19,24,.96);
+    display:none; align-items:center; justify-content:center; text-align:center; padding:24px;
+  }
+  .refresh-overlay.show{display:flex;}
+  .refresh-overlay-text{color:var(--text); font-size:20px; font-weight:700; letter-spacing:1px;}
+  .refresh-overlay-sub{color:var(--muted); font-size:13px; margin-top:10px; max-width:320px;}
+
   button{background:var(--accent); color:#fff; border:none; border-radius:8px; font-weight:600; cursor:pointer;}
 
   /* ---------------- Decks ---------------- */
@@ -609,6 +620,12 @@
 </style>
 </head>
 <body>
+<div class="refresh-overlay" id="refreshOverlay">
+  <div>
+    <div class="refresh-overlay-text">PLEASE REFRESH THE PAGE</div>
+    <div class="refresh-overlay-sub">The audio engine stopped unexpectedly (usually after a long time in the background) and can't be recovered without a reload.</div>
+  </div>
+</div>
 <div class="booth">
 
   <button class="gear-btn" id="settingsBtn">⚙</button>
@@ -834,9 +851,45 @@
   // must share one context, since Web Audio nodes can't be connected across
   // contexts. Created immediately (starts "suspended" until a user gesture).
   var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  function resumeCtx(){ if (audioCtx.state === "suspended") audioCtx.resume(); }
+  var refreshOverlay = document.getElementById("refreshOverlay");
+  function resumeCtx(){
+    // Rare, but the OS can fully discard the context (not just suspend it)
+    // after a long time backgrounded — rebuilding the whole audio graph live
+    // isn't worth it, so just ask for a reload instead of failing silently.
+    if (audioCtx.state === "closed"){ refreshOverlay.classList.add("show"); return; }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+  }
   document.addEventListener("pointerdown", resumeCtx);
   document.addEventListener("keydown", resumeCtx);
+
+  // Keeps the screen from locking/sleeping while a deck is playing — mainly
+  // to avoid the backgrounding scenario above happening as often in the
+  // first place. Released automatically by the browser when the tab is
+  // hidden, and re-requested here once playback resumes in the foreground.
+  var wakeLock = null;
+  var wakeLockPending = false; // true while a request() is in flight, so two calls before it resolves don't both issue one
+  function anyDeckAudible(){
+    return (decks.A && decks.A.isAudible()) || (decks.B && decks.B.isAudible());
+  }
+  function refreshWakeLock(){
+    if (!("wakeLock" in navigator)) return;
+    if (anyDeckAudible()){
+      if (!wakeLock && !wakeLockPending){
+        wakeLockPending = true;
+        navigator.wakeLock.request("screen").then(function(lock){
+          wakeLockPending = false;
+          // Playback may have already stopped while this was in flight —
+          // don't hold a lock nothing still needs.
+          if (!anyDeckAudible()){ lock.release().catch(function(){}); return; }
+          wakeLock = lock;
+          lock.addEventListener("release", function(){ if (wakeLock === lock) wakeLock = null; });
+        }).catch(function(){ wakeLockPending = false; });
+      }
+    } else if (wakeLock){
+      wakeLock.release().catch(function(){});
+      wakeLock = null;
+    }
+  }
 
   // Belt-and-suspenders on top of the CSS (touch-action/overscroll-behavior):
   // blocks the long-press context menu, drag-to-save, Safari's own pinch-zoom
@@ -1172,6 +1225,10 @@
     function nudgeEnd(){ startRateRamp(currentRate, NUDGE_RAMP_OUT); }
 
     function startSteadyPlayback(pos){
+      // A fully-closed context (see resumeCtx's refresh-overlay branch) can't
+      // create nodes at all — bail instead of throwing into whatever caller
+      // (PLAY, CUE, jog, sync...) triggered this.
+      if (audioCtx.state === "closed") return;
       stopNode();
       sourceNode = audioCtx.createBufferSource();
       sourceNode.buffer = audioBuffer;
@@ -1205,6 +1262,7 @@
     }
     function playStutterChunk(){
       if (state !== "stuttering") return;
+      if (audioCtx.state === "closed") return; // see startSteadyPlayback
       var src = audioCtx.createBufferSource();
       src.buffer = audioBuffer;
       src.playbackRate.value = currentRate;
@@ -1244,6 +1302,7 @@
       els.playBtn.textContent = playing ? "❚❚" : "▶";
       els.playBtn.classList.toggle("is-playing", playing);
       els.cueBtn.classList.toggle("is-playing", playing);
+      refreshWakeLock();
     }
 
     function kickLoop(){
@@ -1924,7 +1983,12 @@
       renderPlaylist();
       fillMissingTrackData();
     }
-    decks[opts.id] = { loadTrack: loadTrack, pauseForBackground: pauseForBackground, setInitialPlaylist: setInitialPlaylist, getSyncInfo: getSyncInfo };
+    // Distinct from isPlayingLike(): also true during a CUE-hold stutter
+    // preview, where audio is audibly sounding but the transport UI still
+    // treats the deck as "not playing" — read by the wake-lock logic above,
+    // which cares about "is this deck making sound" rather than play-state.
+    function isAudible(){ return state === "playing" || state === "stuttering"; }
+    decks[opts.id] = { loadTrack: loadTrack, pauseForBackground: pauseForBackground, setInitialPlaylist: setInitialPlaylist, getSyncInfo: getSyncInfo, isAudible: isAudible };
     return { output: gainNode };
   }
 
@@ -2103,7 +2167,10 @@
     if (document.hidden){
       decks.A.pauseForBackground();
       decks.B.pauseForBackground();
-      audioCtx.suspend();
+      // suspend() rejects if the context is already closed (rare, but
+      // possible if the user ignored the refresh prompt and backgrounded
+      // again) — swallow that instead of leaving an unhandled rejection.
+      audioCtx.suspend().catch(function(){});
     } else {
       resumeCtx();
     }
