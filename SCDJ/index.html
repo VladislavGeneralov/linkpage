@@ -82,6 +82,37 @@
   .refresh-overlay-text{color:var(--text); font-size:20px; font-weight:700; letter-spacing:1px;}
   .refresh-overlay-sub{color:var(--muted); font-size:13px; margin-top:10px; max-width:320px;}
 
+  /* First-visit onboarding — shown once (localStorage-remembered), then
+     never again unless storage is cleared. */
+  .welcome-overlay{
+    position:fixed; inset:0; z-index:9998; background:rgba(17,19,24,.92);
+    display:none; align-items:center; justify-content:center; padding:24px;
+  }
+  .welcome-overlay.show{display:flex;}
+  .welcome-box{
+    background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:20px; max-width:340px; width:100%;
+  }
+  .welcome-title{color:var(--accent); font-size:14px; font-weight:700; letter-spacing:1.5px; margin-bottom:14px; text-align:center;}
+  .welcome-list{margin:0; padding:0 0 0 18px; display:flex; flex-direction:column; gap:11px;}
+  .welcome-list li{color:var(--text); font-size:12.5px; line-height:1.5;}
+  .welcome-ok{width:100%; padding:10px; font-size:13px; margin-top:18px;}
+  /* Inline visual copies of real controls, dropped into the instruction
+     text itself rather than described in words — same colors/shape as the
+     actual buttons, just sized to sit inline in a sentence. */
+  .welcome-icon{display:inline-block; vertical-align:middle; line-height:1;}
+  .welcome-badge-range{
+    display:inline-flex; align-items:center; justify-content:center; vertical-align:middle;
+    width:18px; height:18px; font-size:7px; border-radius:50%;
+    background:var(--panel2); color:var(--text); border:1px solid var(--accent);
+    position:relative; top:-1px;
+  }
+  .welcome-jog{
+    display:inline-flex; align-items:center; justify-content:center; gap:3px; vertical-align:middle;
+    width:30px; height:18px; border-radius:6px;
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+  }
+
   button{background:var(--accent); color:#fff; border:none; border-radius:8px; font-weight:600; cursor:pointer;}
 
   /* ---------------- Decks ---------------- */
@@ -397,6 +428,11 @@
 
   /* ---------------- Mixer (Xone:92-inspired) ---------------- */
   .mixer-panel{flex:none;}
+  .credit-link{
+    display:block; text-align:center; margin:10px 0 6px;
+    font-size:11px; color:var(--muted); text-decoration:none;
+  }
+  .credit-link:hover{color:var(--text);}
   .mixer{
     background:linear-gradient(180deg,var(--metal-hi) 0%, var(--metal) 45%, var(--metal-low) 100%);
     border:1px solid var(--mx-black); border-radius:2px;
@@ -625,9 +661,25 @@
     <div class="refresh-overlay-sub">The audio engine stopped unexpectedly (usually after a long time in the background) and can't be recovered without a reload.</div>
   </div>
 </div>
+<div class="welcome-overlay" id="welcomeOverlay">
+  <div class="welcome-box">
+    <div class="welcome-title">SCDJ</div>
+    <ul class="welcome-list">
+      <li>Turn on the physical volume switch on the left side of your phone</li>
+      <li>Use <span class="welcome-icon">🔗</span> to load tracks or playlists from soundcloud</li>
+      <li>All loaded tracks will be stored in the playlist until you reload the page</li>
+      <li>Use <span class="welcome-badge-range">16</span> above the tempo slider for setting tempo range modes in %</li>
+      <li>Use <span class="welcome-jog"><span class="d-chev d-chev-l"></span><span class="d-chev d-chev-l"></span></span> <span class="welcome-jog"><span class="d-chev d-chev-r"></span><span class="d-chev d-chev-r"></span></span> buttons as a jog wheel</li>
+      <li>Double-tap on bpm value to make it the same as on the other deck</li>
+      <li>Don't trust bpm analysers</li>
+      <li>Trust your ears</li>
+    </ul>
+    <button class="welcome-ok" id="welcomeOk">OK</button>
+  </div>
+</div>
 <div class="booth">
 
-  <button class="gear-btn" id="settingsBtn">⚙</button>
+  <button class="gear-btn" id="settingsBtn" hidden>⚙</button>
 
   <div class="settings-panel" id="settingsPanel" hidden>
     <label>SoundCloud client_id
@@ -678,6 +730,8 @@
       </div>
     </div>
   </div>
+
+  <a class="credit-link" href="https://ellectroniqa.com" target="_blank" rel="noopener">created by ellectroniqa</a>
 
 </div>
 <script>
@@ -851,6 +905,20 @@
   // contexts. Created immediately (starts "suspended" until a user gesture).
   var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   var refreshOverlay = document.getElementById("refreshOverlay");
+
+  // Onboarding — shown on every real page load/reload (not persisted), but
+  // never reappears from a quick background/foreground cycle on its own:
+  // that's a visibilitychange, not a reload, so this script (and this IIFE)
+  // never re-runs for it — nothing extra needed to keep it from popping back
+  // up just from switching apps and back.
+  (function initWelcomeOverlay(){
+    var overlay = document.getElementById("welcomeOverlay");
+    overlay.classList.add("show");
+    document.getElementById("welcomeOk").addEventListener("click", function(){
+      overlay.classList.remove("show");
+    });
+  })();
+
   function resumeCtx(){
     if (audioCtx.state === "closed"){ refreshOverlay.classList.add("show"); return; }
     if (audioCtx.state === "suspended") audioCtx.resume();
@@ -2104,7 +2172,20 @@
     });
     o.el.addEventListener("pointerup", function(){ dragging = false; o.el.classList.remove("is-dragging"); });
     o.el.addEventListener("pointercancel", function(){ dragging = false; o.el.classList.remove("is-dragging"); });
-    o.el.addEventListener("dblclick", function(){ setValue(o.def); });
+    // Native dblclick doesn't fire on touch here (same reason as the BPM
+    // sync tap — touch-action:manipulation removes the double-tap gesture
+    // browsers use to decide whether to synthesize it) — detect it manually
+    // off click instead, same as the BPM readout.
+    var lastClickTime = 0;
+    o.el.addEventListener("click", function(){
+      var now = Date.now();
+      if (now - lastClickTime < 350){
+        lastClickTime = 0;
+        setValue(o.def);
+      } else {
+        lastClickTime = now;
+      }
+    });
     setValue(o.def);
   }
 
