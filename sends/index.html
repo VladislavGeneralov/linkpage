@@ -420,7 +420,14 @@
     el.addEventListener('dblclick', () => setValue(initial));
 
     setValue(initial, false);
-    return { get: () => value, set: v => setValue(v, false), min, max };
+    return {
+      get: () => value,
+      set: v => setValue(v, false),
+      // Like set(), but fires onChange - for an external control (MIDI CC)
+      // actually driving the parameter, not just syncing the knob visually.
+      setLive: v => setValue(v, true),
+      min, max
+    };
   }
 
   // Feedback-loop tilt filter - ported from NEWRACK's delayFeedbackFilterFreqs.
@@ -765,6 +772,61 @@
   }
 
   document.addEventListener('pointerdown', startAudio, { once: true });
+
+  // ============================================================================
+  // MIDI - Web MIDI API input from the physical MIDISYSTEM control surface,
+  // same CC map/pattern as NEWRACK's own handleMidiCC/initMidi. Works
+  // independently of whether audio has started yet (moves fader/knob visuals
+  // right away; each control's own onChange already no-ops until audioCtx
+  // exists, and reads the fader's/knob's current position as its starting
+  // value once startAudio() runs).
+  //   CC 101-106: the six main sliders except IN, in the same order they're
+  //     built in - 1/1, 3/4, 1/2, 3/8, 1/4, REV.
+  //   CC 107: IN's own fader.
+  //   CC 108: IN's TONE knob (the tilt filter on the input signal).
+  // Silently no-ops if Web MIDI isn't available or permission is denied.
+  // ============================================================================
+  const MIDI_FADER_CCS = [101, 102, 103, 104, 105, 106];
+  const MIDI_IN_FADER_CC = 107;
+  const MIDI_IN_TONE_CC = 108;
+  const midiFaderChannels = CHANNELS.filter(ch => ch.id !== 'in');
+
+  function setFaderLive(faderEl, value7bit) {
+    const min = parseFloat(faderEl.min), max = parseFloat(faderEl.max);
+    faderEl.value = min + (value7bit / 127) * (max - min);
+    faderEl.dispatchEvent(new Event('input'));
+  }
+
+  function handleMidiCC(cc, value7bit) {
+    const idx = MIDI_FADER_CCS.indexOf(cc);
+    if (idx !== -1) {
+      const ch = midiFaderChannels[idx];
+      if (ch) setFaderLive(controlsById[ch.id].faderEl, value7bit);
+      return;
+    }
+    if (cc === MIDI_IN_FADER_CC) {
+      setFaderLive(controlsById.in.faderEl, value7bit);
+      return;
+    }
+    if (cc === MIDI_IN_TONE_CC) {
+      const knob = knobsById.in.tone;
+      knob.setLive(knob.min + (value7bit / 127) * (knob.max - knob.min));
+    }
+  }
+
+  function initMidi() {
+    if (!navigator.requestMIDIAccess) return;
+    navigator.requestMIDIAccess().then(access => {
+      for (const input of access.inputs.values()) {
+        input.onmidimessage = e => {
+          const [status, data1, data2] = e.data;
+          if ((status & 0xf0) !== 0xb0) return; // only control-change messages
+          handleMidiCC(data1, data2);
+        };
+      }
+    }).catch(() => {}); // permission denied - MIDI is optional
+  }
+  initMidi();
 </script>
 
 </body>
