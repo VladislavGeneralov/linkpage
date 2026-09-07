@@ -329,6 +329,8 @@
   let delayLines = {};
   let reverbSendGain = null;
   let reverbNode = null;
+  let meterDataL = null;
+  let meterDataR = null;
 
   const bpmValue = document.getElementById('bpmValue');
   const tapBtn = document.getElementById('tapBtn');
@@ -436,13 +438,25 @@
     const t = (knob - 0.5) / 0.5;
     return { lowpassFreq: TILT_LP_OFF, highpassFreq: TILT_HP_OFF * Math.pow(TILT_HP_BRIGHT / TILT_HP_OFF, t) };
   }
+  // Shared by every tilt-filter pair (IN's own + each delay's) for both the
+  // initial value and live onChange updates, so the two paths can't drift.
+  function applyTilt(lowpassNode, highpassNode, knob, ramp) {
+    const { lowpassFreq, highpassFreq } = tiltFilterFreqs(knob);
+    if (ramp) {
+      lowpassNode.frequency.setTargetAtTime(lowpassFreq, audioCtx.currentTime, SMOOTH_TIME);
+      highpassNode.frequency.setTargetAtTime(highpassFreq, audioCtx.currentTime, SMOOTH_TIME);
+    } else {
+      lowpassNode.frequency.value = lowpassFreq;
+      highpassNode.frequency.value = highpassFreq;
+    }
+  }
 
   const DELAY_MAX_TIME = 3.2; // seconds, covers a 1/1 beat down to 20 BPM
   const MIN_BPM_FOR_DELAY = 20;
   const MAX_BPM_FOR_DELAY = 300;
 
   // Channel layout: input gain, five tempo-synced delay sends (fractions of
-  // one beat), and a reverb send. Each delay's own FB (0.3-1) and TONE
+  // one beat), and a reverb send. Each delay's own FB (0-1) and TONE
   // (feedback-loop tilt filter) are knobs, not sliders - only the seven send
   // levels are faders.
   const CHANNELS = [
@@ -506,10 +520,7 @@
         format: v => (Math.abs(v - 0.5) < 0.03 ? '—' : (v < 0.5 ? 'lp' : 'hp')),
         onChange: v => {
           if (!inputTiltLowpass) return;
-          const { lowpassFreq, highpassFreq } = tiltFilterFreqs(v);
-          const now = audioCtx.currentTime;
-          inputTiltLowpass.frequency.setTargetAtTime(lowpassFreq, now, SMOOTH_TIME);
-          inputTiltHighpass.frequency.setTargetAtTime(highpassFreq, now, SMOOTH_TIME);
+          applyTilt(inputTiltLowpass, inputTiltHighpass, v, true);
         }
       });
     }
@@ -526,10 +537,7 @@
         onChange: v => {
           const d = delayLines[ch.id];
           if (!d) return;
-          const { lowpassFreq, highpassFreq } = tiltFilterFreqs(v);
-          const now = audioCtx.currentTime;
-          d.tiltLowpass.frequency.setTargetAtTime(lowpassFreq, now, SMOOTH_TIME);
-          d.tiltHighpass.frequency.setTargetAtTime(highpassFreq, now, SMOOTH_TIME);
+          applyTilt(d.tiltLowpass, d.tiltHighpass, v, true);
         }
       });
     }
@@ -585,6 +593,8 @@
   channelsEl.appendChild(meterChannel);
 
   let analyserL = null, analyserR = null;
+  let meterLevelL = 0, meterLevelR = 0;
+  const METER_SMOOTHING = 0.7; // ballistics - smoothingTimeConstant has no effect on getByteTimeDomainData, so it's done by hand here
   function lightMeterBar(segs, level01) {
     const lit = Math.round(level01 * segs.length);
     segs.forEach((seg, i) => seg.classList.toggle('lit', i < lit));
@@ -599,14 +609,14 @@
   }
   function updateMeters() {
     if (analyserL && analyserR) {
-      const dataL = new Uint8Array(analyserL.fftSize);
-      const dataR = new Uint8Array(analyserR.fftSize);
-      analyserL.getByteTimeDomainData(dataL);
-      analyserR.getByteTimeDomainData(dataR);
+      analyserL.getByteTimeDomainData(meterDataL);
+      analyserR.getByteTimeDomainData(meterDataR);
       // RMS of a sine sits around 0.7 of its peak - scaled up so normal
       // signal levels actually light a meaningful stretch of the bar.
-      lightMeterBar(meterL.segs, Math.min(1, rms(dataL) * 2.5));
-      lightMeterBar(meterR.segs, Math.min(1, rms(dataR) * 2.5));
+      meterLevelL += (Math.min(1, rms(meterDataL) * 2.5) - meterLevelL) * (1 - METER_SMOOTHING);
+      meterLevelR += (Math.min(1, rms(meterDataR) * 2.5) - meterLevelR) * (1 - METER_SMOOTHING);
+      lightMeterBar(meterL.segs, meterLevelL);
+      lightMeterBar(meterR.segs, meterLevelR);
     }
     requestAnimationFrame(updateMeters);
   }
@@ -632,6 +642,24 @@
     });
   }
 
+  // If mic permission is denied (or any of this throws), tear the half-built
+  // graph down and re-arm the pointerdown listener - otherwise the {once:
+  // true} listener is already gone and every control would be dead for the
+  // rest of the session with no way to retry.
+  function resetAudioState() {
+    if (audioCtx) audioCtx.close();
+    audioCtx = null;
+    inputGainNode = null;
+    inputTiltHighpass = null;
+    inputTiltLowpass = null;
+    delayLines = {};
+    reverbSendGain = null;
+    reverbNode = null;
+    analyserL = null;
+    analyserR = null;
+    document.addEventListener('pointerdown', startAudio, { once: true });
+  }
+
   async function startAudio() {
     if (audioCtx) {
       audioCtx.resume();
@@ -639,95 +667,101 @@
     }
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
-    const masterGain = audioCtx.createGain();
-    masterGain.gain.value = 1;
-    masterGain.connect(audioCtx.destination);
+    try {
+      const masterGain = audioCtx.createGain();
+      masterGain.gain.value = 1;
+      masterGain.connect(audioCtx.destination);
 
-    const meterSplitter = audioCtx.createChannelSplitter(2);
-    analyserL = audioCtx.createAnalyser();
-    analyserL.fftSize = 256;
-    analyserL.smoothingTimeConstant = 0.8;
-    analyserR = audioCtx.createAnalyser();
-    analyserR.fftSize = 256;
-    analyserR.smoothingTimeConstant = 0.8;
-    masterGain.connect(meterSplitter);
-    meterSplitter.connect(analyserL, 0);
-    meterSplitter.connect(analyserR, 1);
+      const meterSplitter = audioCtx.createChannelSplitter(2);
+      analyserL = audioCtx.createAnalyser();
+      analyserL.fftSize = 256;
+      analyserR = audioCtx.createAnalyser();
+      analyserR.fftSize = 256;
+      meterDataL = new Uint8Array(analyserL.fftSize);
+      meterDataR = new Uint8Array(analyserR.fftSize);
+      masterGain.connect(meterSplitter);
+      meterSplitter.connect(analyserL, 0);
+      meterSplitter.connect(analyserR, 1);
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const source = audioCtx.createMediaStreamSource(stream);
+      // Disable Chrome's default mic processing - this is an instrument/line
+      // send effect, not a voice-chat input, so AGC pumping the level and
+      // noise-suppression/echo-cancellation eating transients would actively
+      // work against it.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+      });
+      const source = audioCtx.createMediaStreamSource(stream);
 
-    inputGainNode = audioCtx.createGain();
-    inputGainNode.gain.value = parseFloat(controlsById.in.faderEl.value);
-    source.connect(inputGainNode);
+      inputGainNode = audioCtx.createGain();
+      inputGainNode.gain.value = parseFloat(controlsById.in.faderEl.value);
+      source.connect(inputGainNode);
 
-    // IN's own tone knob - same tilt filter as the delays' TONE, just
-    // straight in the signal path (no feedback loop to sit inside).
-    inputTiltHighpass = audioCtx.createBiquadFilter();
-    inputTiltHighpass.type = 'highpass';
-    inputTiltHighpass.Q.value = TILT_Q;
-    inputTiltLowpass = audioCtx.createBiquadFilter();
-    inputTiltLowpass.type = 'lowpass';
-    inputTiltLowpass.Q.value = TILT_Q;
-    const inTilt = tiltFilterFreqs(knobsById.in.tone.get());
-    inputTiltLowpass.frequency.value = inTilt.lowpassFreq;
-    inputTiltHighpass.frequency.value = inTilt.highpassFreq;
+      // IN's own tone knob - same tilt filter as the delays' TONE, just
+      // straight in the signal path (no feedback loop to sit inside).
+      inputTiltHighpass = audioCtx.createBiquadFilter();
+      inputTiltHighpass.type = 'highpass';
+      inputTiltHighpass.Q.value = TILT_Q;
+      inputTiltLowpass = audioCtx.createBiquadFilter();
+      inputTiltLowpass.type = 'lowpass';
+      inputTiltLowpass.Q.value = TILT_Q;
+      applyTilt(inputTiltLowpass, inputTiltHighpass, knobsById.in.tone.get(), false);
 
-    inputGainNode.connect(inputTiltHighpass).connect(inputTiltLowpass);
-    inputTiltLowpass.connect(masterGain);
+      inputGainNode.connect(inputTiltHighpass).connect(inputTiltLowpass);
+      inputTiltLowpass.connect(masterGain);
 
-    CHANNELS.filter(ch => ch.fraction !== undefined).forEach(ch => {
-      const send = audioCtx.createGain();
-      send.gain.value = parseFloat(controlsById[ch.id].faderEl.value);
+      CHANNELS.filter(ch => ch.fraction !== undefined).forEach(ch => {
+        const send = audioCtx.createGain();
+        send.gain.value = parseFloat(controlsById[ch.id].faderEl.value);
 
-      const delay = audioCtx.createDelay(DELAY_MAX_TIME);
+        const delay = audioCtx.createDelay(DELAY_MAX_TIME);
 
-      const feedback = audioCtx.createGain();
-      feedback.gain.value = knobsById[ch.id].fb.get();
+        const feedback = audioCtx.createGain();
+        feedback.gain.value = knobsById[ch.id].fb.get();
 
-      const fixedHipass = audioCtx.createBiquadFilter();
-      fixedHipass.type = 'highpass';
-      fixedHipass.frequency.value = 80;
-      fixedHipass.Q.value = Math.SQRT1_2; // flat passband, so loop gain == FB knob value
+        const fixedHipass = audioCtx.createBiquadFilter();
+        fixedHipass.type = 'highpass';
+        fixedHipass.frequency.value = 80;
+        fixedHipass.Q.value = Math.SQRT1_2; // flat passband, so loop gain == FB knob value
 
-      const tiltHighpass = audioCtx.createBiquadFilter();
-      tiltHighpass.type = 'highpass';
-      tiltHighpass.Q.value = TILT_Q;
-      const tiltLowpass = audioCtx.createBiquadFilter();
-      tiltLowpass.type = 'lowpass';
-      tiltLowpass.Q.value = TILT_Q;
-      const { lowpassFreq, highpassFreq } = tiltFilterFreqs(knobsById[ch.id].tone.get());
-      tiltLowpass.frequency.value = lowpassFreq;
-      tiltHighpass.frequency.value = highpassFreq;
+        const tiltHighpass = audioCtx.createBiquadFilter();
+        tiltHighpass.type = 'highpass';
+        tiltHighpass.Q.value = TILT_Q;
+        const tiltLowpass = audioCtx.createBiquadFilter();
+        tiltLowpass.type = 'lowpass';
+        tiltLowpass.Q.value = TILT_Q;
+        applyTilt(tiltLowpass, tiltHighpass, knobsById[ch.id].tone.get(), false);
 
-      inputTiltLowpass.connect(send);
-      send.connect(delay);
-      delay.connect(feedback);
-      feedback.connect(fixedHipass).connect(tiltHighpass).connect(tiltLowpass).connect(delay);
-      delay.connect(masterGain);
+        inputTiltLowpass.connect(send);
+        send.connect(delay);
+        delay.connect(feedback);
+        feedback.connect(fixedHipass).connect(tiltHighpass).connect(tiltLowpass).connect(delay);
+        delay.connect(masterGain);
 
-      delayLines[ch.id] = { send, node: delay, feedback, tiltHighpass, tiltLowpass, fraction: ch.fraction };
-    });
+        delayLines[ch.id] = { send, node: delay, feedback, tiltHighpass, tiltLowpass, fraction: ch.fraction };
+      });
 
-    await audioCtx.audioWorklet.addModule('reverb-processor.js');
-    reverbNode = new AudioWorkletNode(audioCtx, 'DattorroReverb', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [2]
-    });
-    reverbNode.parameters.get('dry').value = 0; // send bus, not an insert
-    reverbNode.parameters.get('wet').value = 0.6;
-    reverbNode.parameters.get('decay').value = knobsById.rev.decay.get();
-    reverbNode.parameters.get('damping').value = knobsById.rev.damp.get();
+      await audioCtx.audioWorklet.addModule('reverb-processor.js');
+      reverbNode = new AudioWorkletNode(audioCtx, 'DattorroReverb', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2]
+      });
+      reverbNode.parameters.get('dry').value = 0; // send bus, not an insert
+      reverbNode.parameters.get('wet').value = 0.6;
+      reverbNode.parameters.get('decay').value = knobsById.rev.decay.get();
+      reverbNode.parameters.get('damping').value = knobsById.rev.damp.get();
 
-    reverbSendGain = audioCtx.createGain();
-    reverbSendGain.gain.value = parseFloat(controlsById.rev.faderEl.value);
+      reverbSendGain = audioCtx.createGain();
+      reverbSendGain.gain.value = parseFloat(controlsById.rev.faderEl.value);
 
-    inputTiltLowpass.connect(reverbSendGain);
-    reverbSendGain.connect(reverbNode);
-    reverbNode.connect(masterGain);
+      inputTiltLowpass.connect(reverbSendGain);
+      reverbSendGain.connect(reverbNode);
+      reverbNode.connect(masterGain);
 
-    updateDelayTimes();
+      updateDelayTimes();
+    } catch (err) {
+      resetAudioState();
+    }
   }
 
   document.addEventListener('pointerdown', startAudio, { once: true });
