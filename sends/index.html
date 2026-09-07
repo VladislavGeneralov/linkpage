@@ -1,0 +1,737 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SendS</title>
+<style>
+  /* Skin ported from NEWRACK (C:\Users\Vlad\Desktop\coding\NEWRACK\style.css):
+     brushed-aluminum module panel, black knobs/faders with a metal grip
+     stripe - same variables, same input[type=range]/.knob/.mixer-fader-track
+     rules, just applied to this one standalone module instead of a rack. */
+  :root {
+    --metal-hi: #eef0f1;
+    --metal: #cacccf;
+    --metal-low: #94969a;
+    --panel-gradient: linear-gradient(180deg, var(--metal-hi) 0%, var(--metal) 45%, var(--metal-low) 100%);
+    --black: #0d0d0e;
+    --black2: #1c1d1f;
+    --groove: #141416;
+    --ink: #26282c;
+    --ink-muted: #61656b;
+    --text: #d8dadf;
+    --led-green: #3ecf6e;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { height: 100%; margin: 0; }
+
+  body {
+    background: var(--black);
+    color: var(--text);
+    font-family: Arial, Helvetica, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    touch-action: manipulation;
+  }
+
+  .cell {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel-gradient);
+    border: 1px solid var(--black);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .5);
+    color: var(--ink);
+    padding: 32px;
+    width: min(1800px, 98vw);
+  }
+
+  .cell-title {
+    display: block;
+    margin-bottom: 20px;
+    font-size: 12px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .bpm-channel {
+    justify-content: center;
+    gap: 14px;
+    flex: 0 0 auto;
+    width: 120px;
+    border-right: 1px solid var(--black2);
+    padding-right: 24px;
+  }
+
+  /* Also the manual-entry field - typing a number in directly is just
+     editing the same input the tap-tempo result is displayed in. */
+  .seq-bpm-value {
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--ink-muted);
+    color: var(--ink);
+    font-family: inherit;
+    width: 4em;
+    font-size: 22px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    padding: 2px 0;
+  }
+  .seq-bpm-value::-webkit-inner-spin-button,
+  .seq-bpm-value::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .seq-bpm-value {
+    -moz-appearance: textfield;
+    appearance: textfield;
+  }
+
+  .tap-btn-round {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 1px solid var(--black);
+    background: linear-gradient(180deg, var(--black2), var(--black));
+    color: var(--text);
+    font-family: inherit;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .tap-btn-round:active {
+    background: var(--metal);
+    color: var(--black);
+  }
+
+  .reset-btn-small {
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--black);
+    background: linear-gradient(180deg, var(--black2), var(--black));
+    color: var(--text);
+    font-family: inherit;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+
+  .mixer-channels {
+    display: flex;
+    gap: 24px;
+    flex: 1;
+  }
+
+  .mixer-channel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+  }
+
+  .knob-row {
+    display: flex;
+    gap: 20px;
+    min-height: 56px;
+    align-items: flex-end;
+  }
+
+  .knob-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .knob-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--ink-muted);
+  }
+
+  .knob-value {
+    font-size: 11px;
+    color: var(--ink-muted);
+    min-height: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Round because that's the actual shape of a potentiometer. */
+  .knob {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    position: relative;
+    cursor: ns-resize;
+    touch-action: none;
+    background: radial-gradient(circle at 35% 30%, var(--black2), var(--black) 70%);
+    border: 1px solid var(--black);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, .5);
+  }
+
+  .knob::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 6px;
+    width: 4px;
+    height: 16px;
+    background: var(--metal-hi);
+    transform-origin: 50% 18px;
+    transform: translateX(-50%) rotate(var(--deg, 0deg));
+  }
+
+  .channel-num {
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  /* Grooved recessed track + gradient metal-cap thumb - a real fader cap,
+     long axis perpendicular to the travel direction, same as physical
+     hardware (Xone-style). */
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 44px;
+    background: transparent;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 8px;
+    background: repeating-linear-gradient(90deg, var(--groove), var(--groove) 2px, transparent 2px, transparent 16px), var(--groove);
+    border: 1px solid var(--black);
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 28px;
+    height: 64px;
+    margin-top: -28px;
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
+      linear-gradient(180deg, var(--black2), var(--black));
+    border: 1px solid var(--black);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .6);
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 28px;
+    height: 64px;
+    border-radius: 6px;
+    background:
+      linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
+      linear-gradient(180deg, var(--black2), var(--black));
+    border: 1px solid var(--black);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, .6);
+    cursor: pointer;
+  }
+  input[type="range"]::-moz-range-track {
+    height: 8px;
+    background: var(--groove);
+    border: 1px solid var(--black);
+  }
+
+  /* Vertical fader = the same horizontal <input type=range> above, rotated
+     -90deg inside a fixed-size wrapper - the grip-groove gradient direction
+     is pre-rotated 90deg the other way so it still reads horizontal on the
+     cap after the rotation lands. */
+  .mixer-fader-track {
+    position: relative;
+    width: 44px;
+    height: 360px;
+  }
+  .mixer-fader-track input[type="range"] {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 360px;
+    height: 44px;
+    margin: 0;
+    transform: translate(-50%, -50%) rotate(-90deg);
+  }
+  .mixer-fader-track input[type="range"]::-webkit-slider-thumb {
+    background:
+      linear-gradient(90deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
+      linear-gradient(180deg, var(--black2), var(--black));
+  }
+  .mixer-fader-track input[type="range"]::-moz-range-thumb {
+    background:
+      linear-gradient(90deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
+      linear-gradient(180deg, var(--black2), var(--black));
+  }
+
+  .meter-channel {
+    flex: 0 0 auto;
+  }
+
+  .vu-bars {
+    display: flex;
+    gap: 6px;
+    height: 360px;
+  }
+
+  .vu-meter {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+    width: 16px;
+    height: 100%;
+  }
+
+  .vu-segment {
+    flex: 1;
+    background: var(--groove);
+    border: 1px solid var(--black);
+  }
+
+  .vu-segment.lit {
+    background: var(--led-green);
+  }
+</style>
+</head>
+<body>
+
+<div class="cell">
+  <span class="cell-title">SENDS</span>
+
+  <div class="mixer-channels" id="channels">
+    <div class="mixer-channel bpm-channel">
+      <span class="knob-label">bpm</span>
+      <input class="seq-bpm-value" id="bpmValue" type="number" step="0.1" min="0" value="0.0">
+      <button class="tap-btn-round" id="tapBtn">TAP</button>
+      <button class="reset-btn-small" id="resetBtn">RESET</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SMOOTH_TIME = 0.02;
+
+  // Declared up front - setBpm(0) below calls updateDelayTimes(), which
+  // reads audioCtx/delayLines; a `let` declared further down would still be
+  // in its temporal dead zone at that call site.
+  let audioCtx = null;
+  let inputGainNode = null;
+  let inputTiltHighpass = null;
+  let inputTiltLowpass = null;
+  let delayLines = {};
+  let reverbSendGain = null;
+  let reverbNode = null;
+
+  const bpmValue = document.getElementById('bpmValue');
+  const tapBtn = document.getElementById('tapBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const channelsEl = document.getElementById('channels');
+
+  let tapTimes = [];
+  const MAX_TAPS = 8;
+  const RESET_GAP_MS = 2000;
+  let currentBpm = 0;
+
+  function setBpm(value) {
+    currentBpm = value;
+    bpmValue.value = value.toFixed(1);
+    updateDelayTimes();
+  }
+
+  tapBtn.addEventListener('click', () => {
+    const now = performance.now();
+    if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > RESET_GAP_MS) {
+      tapTimes = [];
+    }
+    tapTimes.push(now);
+    if (tapTimes.length > MAX_TAPS) {
+      tapTimes.shift();
+    }
+    if (tapTimes.length >= 2) {
+      const intervals = [];
+      for (let i = 1; i < tapTimes.length; i++) {
+        intervals.push(tapTimes[i] - tapTimes[i - 1]);
+      }
+      const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      setBpm(60000 / avg);
+    }
+  });
+
+  bpmValue.addEventListener('input', () => {
+    const val = parseFloat(bpmValue.value);
+    if (!isNaN(val)) {
+      currentBpm = val;
+      updateDelayTimes();
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    tapTimes = [];
+    setBpm(0);
+  });
+
+  setBpm(0);
+
+  // ============================================================================
+  // Rotary knob widget - ported verbatim from NEWRACK's makeKnob (script.js).
+  // Vertical-drag-to-turn, double-click/tap resets to the starting value.
+  // ============================================================================
+  function makeKnob(el, opts) {
+    const { min, max, value: initial, onChange, format } = opts;
+    let value = initial;
+    const valEl = el.parentElement.querySelector('.knob-value');
+
+    function render() {
+      const t = (value - min) / (max - min);
+      const deg = -135 + t * 270;
+      el.style.setProperty('--deg', deg + 'deg');
+      if (valEl) valEl.textContent = format ? format(value) : value.toFixed(2);
+    }
+    function setValue(v, notify) {
+      value = Math.min(max, Math.max(min, v));
+      render();
+      if (notify !== false && onChange) onChange(value);
+    }
+
+    let dragging = false, startY = 0, startVal = 0;
+    el.addEventListener('pointerdown', e => {
+      dragging = true;
+      startY = e.clientY;
+      startVal = value;
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      const delta = startY - e.clientY;
+      setValue(startVal + (delta / 150) * (max - min));
+    });
+    el.addEventListener('pointerup', () => { dragging = false; });
+    el.addEventListener('pointercancel', () => { dragging = false; });
+    el.addEventListener('dblclick', () => setValue(initial));
+
+    setValue(initial, false);
+    return { get: () => value, set: v => setValue(v, false), min, max };
+  }
+
+  // Feedback-loop tilt filter - ported from NEWRACK's delayFeedbackFilterFreqs.
+  // Knob centered (0.5) = both filters parked at their transparent extreme;
+  // left sweeps a lowpass down (darkens each repeat), right sweeps a highpass
+  // up (thins each repeat) - same knob the DELAY module's "tone" control uses.
+  const TILT_Q = 0.3;
+  const TILT_LP_OFF = 20000, TILT_LP_DARK = 500;
+  const TILT_HP_OFF = 20, TILT_HP_BRIGHT = 2500;
+  function tiltFilterFreqs(knob) {
+    if (knob <= 0.5) {
+      const t = (0.5 - knob) / 0.5;
+      return { lowpassFreq: TILT_LP_OFF * Math.pow(TILT_LP_DARK / TILT_LP_OFF, t), highpassFreq: TILT_HP_OFF };
+    }
+    const t = (knob - 0.5) / 0.5;
+    return { lowpassFreq: TILT_LP_OFF, highpassFreq: TILT_HP_OFF * Math.pow(TILT_HP_BRIGHT / TILT_HP_OFF, t) };
+  }
+
+  const DELAY_MAX_TIME = 3.2; // seconds, covers a 1/1 beat down to 20 BPM
+  const MIN_BPM_FOR_DELAY = 20;
+  const MAX_BPM_FOR_DELAY = 300;
+
+  // Channel layout: input gain, five tempo-synced delay sends (fractions of
+  // one beat), and a reverb send. Each delay's own FB (0.3-1) and TONE
+  // (feedback-loop tilt filter) are knobs, not sliders - only the seven send
+  // levels are faders.
+  const CHANNELS = [
+    { id: 'in',  label: 'IN' },
+    { id: 'd1',  label: '1/1', fraction: 1 },
+    { id: 'd2',  label: '3/4', fraction: 0.75 },
+    { id: 'd3',  label: '1/2', fraction: 0.5 },
+    { id: 'd4',  label: '3/8', fraction: 0.375 },
+    { id: 'd5',  label: '1/4', fraction: 0.25 },
+    { id: 'rev', label: 'REV', reverb: true }
+  ];
+
+  const pct = v => Math.round(v * 100) + '%';
+  const controlsById = {};
+  const knobsById = {};
+
+  CHANNELS.forEach(ch => {
+    const strip = document.createElement('div');
+    strip.className = 'mixer-channel';
+
+    let knobsHtml = '';
+    if (ch.id === 'in') {
+      knobsHtml =
+        '<div class="knob-group"><div class="knob" data-k="tone"></div><span class="knob-label">tone</span><span class="knob-value"></span></div>';
+    } else if (ch.fraction !== undefined) {
+      knobsHtml =
+        '<div class="knob-group"><div class="knob" data-k="fb"></div><span class="knob-label">fb</span><span class="knob-value"></span></div>' +
+        '<div class="knob-group"><div class="knob" data-k="tone"></div><span class="knob-label">tone</span><span class="knob-value"></span></div>';
+    } else if (ch.reverb) {
+      knobsHtml =
+        '<div class="knob-group"><div class="knob" data-k="decay"></div><span class="knob-label">decay</span><span class="knob-value"></span></div>' +
+        '<div class="knob-group"><div class="knob" data-k="damp"></div><span class="knob-label">damp</span><span class="knob-value"></span></div>';
+    }
+
+    strip.innerHTML =
+      '<div class="knob-row">' + knobsHtml + '</div>' +
+      '<div class="mixer-fader-track"><input type="range" class="mixer-fader" min="0" max="1.2" step="0.01" value="' + (ch.id === 'in' ? 0.8 : 0) + '"></div>' +
+      '<span class="channel-num">' + ch.label + '</span>';
+    channelsEl.appendChild(strip);
+
+    const faderEl = strip.querySelector('.mixer-fader');
+    controlsById[ch.id] = { faderEl };
+
+    faderEl.addEventListener('input', () => {
+      const v = parseFloat(faderEl.value);
+      if (!audioCtx) return;
+      if (ch.id === 'in') {
+        if (inputGainNode) inputGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME);
+      } else if (ch.reverb) {
+        if (reverbSendGain) reverbSendGain.gain.setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME);
+      } else {
+        const d = delayLines[ch.id];
+        if (d) d.send.gain.setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME);
+      }
+    });
+
+    if (ch.id === 'in') {
+      knobsById.in = {};
+      knobsById.in.tone = makeKnob(strip.querySelector('[data-k="tone"]'), {
+        min: 0, max: 1, value: 0.5,
+        format: v => (Math.abs(v - 0.5) < 0.03 ? '—' : (v < 0.5 ? 'lp' : 'hp')),
+        onChange: v => {
+          if (!inputTiltLowpass) return;
+          const { lowpassFreq, highpassFreq } = tiltFilterFreqs(v);
+          const now = audioCtx.currentTime;
+          inputTiltLowpass.frequency.setTargetAtTime(lowpassFreq, now, SMOOTH_TIME);
+          inputTiltHighpass.frequency.setTargetAtTime(highpassFreq, now, SMOOTH_TIME);
+        }
+      });
+    }
+
+    if (ch.fraction !== undefined) {
+      knobsById[ch.id] = {};
+      knobsById[ch.id].fb = makeKnob(strip.querySelector('[data-k="fb"]'), {
+        min: 0, max: 1, value: 0.5, format: pct,
+        onChange: v => { const d = delayLines[ch.id]; if (d) d.feedback.gain.setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME); }
+      });
+      knobsById[ch.id].tone = makeKnob(strip.querySelector('[data-k="tone"]'), {
+        min: 0, max: 1, value: 0.5,
+        format: v => (Math.abs(v - 0.5) < 0.03 ? '—' : (v < 0.5 ? 'lp' : 'hp')),
+        onChange: v => {
+          const d = delayLines[ch.id];
+          if (!d) return;
+          const { lowpassFreq, highpassFreq } = tiltFilterFreqs(v);
+          const now = audioCtx.currentTime;
+          d.tiltLowpass.frequency.setTargetAtTime(lowpassFreq, now, SMOOTH_TIME);
+          d.tiltHighpass.frequency.setTargetAtTime(highpassFreq, now, SMOOTH_TIME);
+        }
+      });
+    }
+
+    if (ch.reverb) {
+      knobsById.rev = {};
+      knobsById.rev.decay = makeKnob(strip.querySelector('[data-k="decay"]'), {
+        min: 0, max: 0.95, value: 0.9, format: pct,
+        onChange: v => { if (reverbNode) reverbNode.parameters.get('decay').setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME); }
+      });
+      knobsById.rev.damp = makeKnob(strip.querySelector('[data-k="damp"]'), {
+        min: 0, max: 1, value: 0.3, format: pct,
+        onChange: v => { if (reverbNode) reverbNode.parameters.get('damping').setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME); }
+      });
+    }
+  });
+
+  // VU meter - two LED-segment bars (L/R), same flat on/off LED-style color
+  // swap NEWRACK's own style.css already reserves --led-green for (defined
+  // there, unused - this is what it was for). Tapped from masterGain, after
+  // every send/dry path has summed, so it reads the module's actual output.
+  const METER_SEGMENTS = 16;
+  function buildMeterBar() {
+    const bar = document.createElement('div');
+    bar.className = 'vu-meter';
+    const segs = [];
+    for (let i = 0; i < METER_SEGMENTS; i++) {
+      const seg = document.createElement('div');
+      seg.className = 'vu-segment';
+      bar.appendChild(seg);
+      segs.push(seg);
+    }
+    return { bar, segs };
+  }
+  const meterL = buildMeterBar();
+  const meterR = buildMeterBar();
+  const meterChannel = document.createElement('div');
+  meterChannel.className = 'mixer-channel meter-channel';
+  const meterBars = document.createElement('div');
+  meterBars.className = 'vu-bars';
+  meterBars.appendChild(meterL.bar);
+  meterBars.appendChild(meterR.bar);
+  const meterLabel = document.createElement('span');
+  meterLabel.className = 'channel-num';
+  meterLabel.textContent = 'VU';
+  // Empty spacer matching the other channels' knob-row height, so the bars
+  // start level with the faders' own travel instead of with their knobs.
+  const meterSpacer = document.createElement('div');
+  meterSpacer.className = 'knob-row';
+  meterChannel.appendChild(meterSpacer);
+  meterChannel.appendChild(meterBars);
+  meterChannel.appendChild(meterLabel);
+  channelsEl.appendChild(meterChannel);
+
+  let analyserL = null, analyserR = null;
+  function lightMeterBar(segs, level01) {
+    const lit = Math.round(level01 * segs.length);
+    segs.forEach((seg, i) => seg.classList.toggle('lit', i < lit));
+  }
+  function rms(data) {
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    return Math.sqrt(sum / data.length);
+  }
+  function updateMeters() {
+    if (analyserL && analyserR) {
+      const dataL = new Uint8Array(analyserL.fftSize);
+      const dataR = new Uint8Array(analyserR.fftSize);
+      analyserL.getByteTimeDomainData(dataL);
+      analyserR.getByteTimeDomainData(dataR);
+      // RMS of a sine sits around 0.7 of its peak - scaled up so normal
+      // signal levels actually light a meaningful stretch of the bar.
+      lightMeterBar(meterL.segs, Math.min(1, rms(dataL) * 2.5));
+      lightMeterBar(meterR.segs, Math.min(1, rms(dataR) * 2.5));
+    }
+    requestAnimationFrame(updateMeters);
+  }
+  updateMeters();
+
+  // --- Web Audio graph ---------------------------------------------------
+  // Input gain feeds dry output plus four delay sends and a reverb send.
+  // Each delay's feedback loop runs through a fixed 80Hz rumble cut (keeps
+  // loop gain honest at the FB knob's displayed value - see NEWRACK's own
+  // comment on delayFeedbackFixedHipass) and the FB/TONE-controlled tilt
+  // filter pair. The reverb send goes into the same Dattorro plate reverb
+  // (reverb-processor.js, AudioWorkletNode) NEWRACK uses - decay/damping are
+  // live AudioParams there, no buffer rebuild needed. This is why the file
+  // needs start.bat/http.server instead of a plain double-click: worklet
+  // modules don't load over file://.
+
+  function updateDelayTimes() {
+    if (!audioCtx) return;
+    const bpm = Math.min(MAX_BPM_FOR_DELAY, Math.max(MIN_BPM_FOR_DELAY, currentBpm || MIN_BPM_FOR_DELAY));
+    const beatSec = 60 / bpm;
+    Object.values(delayLines).forEach(d => {
+      d.node.delayTime.setTargetAtTime(beatSec * d.fraction, audioCtx.currentTime, 0.01);
+    });
+  }
+
+  async function startAudio() {
+    if (audioCtx) {
+      audioCtx.resume();
+      return;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+    const masterGain = audioCtx.createGain();
+    masterGain.gain.value = 1;
+    masterGain.connect(audioCtx.destination);
+
+    const meterSplitter = audioCtx.createChannelSplitter(2);
+    analyserL = audioCtx.createAnalyser();
+    analyserL.fftSize = 256;
+    analyserL.smoothingTimeConstant = 0.8;
+    analyserR = audioCtx.createAnalyser();
+    analyserR.fftSize = 256;
+    analyserR.smoothingTimeConstant = 0.8;
+    masterGain.connect(meterSplitter);
+    meterSplitter.connect(analyserL, 0);
+    meterSplitter.connect(analyserR, 1);
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const source = audioCtx.createMediaStreamSource(stream);
+
+    inputGainNode = audioCtx.createGain();
+    inputGainNode.gain.value = parseFloat(controlsById.in.faderEl.value);
+    source.connect(inputGainNode);
+
+    // IN's own tone knob - same tilt filter as the delays' TONE, just
+    // straight in the signal path (no feedback loop to sit inside).
+    inputTiltHighpass = audioCtx.createBiquadFilter();
+    inputTiltHighpass.type = 'highpass';
+    inputTiltHighpass.Q.value = TILT_Q;
+    inputTiltLowpass = audioCtx.createBiquadFilter();
+    inputTiltLowpass.type = 'lowpass';
+    inputTiltLowpass.Q.value = TILT_Q;
+    const inTilt = tiltFilterFreqs(knobsById.in.tone.get());
+    inputTiltLowpass.frequency.value = inTilt.lowpassFreq;
+    inputTiltHighpass.frequency.value = inTilt.highpassFreq;
+
+    inputGainNode.connect(inputTiltHighpass).connect(inputTiltLowpass);
+    inputTiltLowpass.connect(masterGain);
+
+    CHANNELS.filter(ch => ch.fraction !== undefined).forEach(ch => {
+      const send = audioCtx.createGain();
+      send.gain.value = parseFloat(controlsById[ch.id].faderEl.value);
+
+      const delay = audioCtx.createDelay(DELAY_MAX_TIME);
+
+      const feedback = audioCtx.createGain();
+      feedback.gain.value = knobsById[ch.id].fb.get();
+
+      const fixedHipass = audioCtx.createBiquadFilter();
+      fixedHipass.type = 'highpass';
+      fixedHipass.frequency.value = 80;
+      fixedHipass.Q.value = Math.SQRT1_2; // flat passband, so loop gain == FB knob value
+
+      const tiltHighpass = audioCtx.createBiquadFilter();
+      tiltHighpass.type = 'highpass';
+      tiltHighpass.Q.value = TILT_Q;
+      const tiltLowpass = audioCtx.createBiquadFilter();
+      tiltLowpass.type = 'lowpass';
+      tiltLowpass.Q.value = TILT_Q;
+      const { lowpassFreq, highpassFreq } = tiltFilterFreqs(knobsById[ch.id].tone.get());
+      tiltLowpass.frequency.value = lowpassFreq;
+      tiltHighpass.frequency.value = highpassFreq;
+
+      inputTiltLowpass.connect(send);
+      send.connect(delay);
+      delay.connect(feedback);
+      feedback.connect(fixedHipass).connect(tiltHighpass).connect(tiltLowpass).connect(delay);
+      delay.connect(masterGain);
+
+      delayLines[ch.id] = { send, node: delay, feedback, tiltHighpass, tiltLowpass, fraction: ch.fraction };
+    });
+
+    await audioCtx.audioWorklet.addModule('reverb-processor.js');
+    reverbNode = new AudioWorkletNode(audioCtx, 'DattorroReverb', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [2]
+    });
+    reverbNode.parameters.get('dry').value = 0; // send bus, not an insert
+    reverbNode.parameters.get('wet').value = 0.6;
+    reverbNode.parameters.get('decay').value = knobsById.rev.decay.get();
+    reverbNode.parameters.get('damping').value = knobsById.rev.damp.get();
+
+    reverbSendGain = audioCtx.createGain();
+    reverbSendGain.gain.value = parseFloat(controlsById.rev.faderEl.value);
+
+    inputTiltLowpass.connect(reverbSendGain);
+    reverbSendGain.connect(reverbNode);
+    reverbNode.connect(masterGain);
+
+    updateDelayTimes();
+  }
+
+  document.addEventListener('pointerdown', startAudio, { once: true });
+</script>
+
+</body>
+</html>
