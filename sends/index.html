@@ -428,8 +428,8 @@
   // left sweeps a lowpass down (darkens each repeat), right sweeps a highpass
   // up (thins each repeat) - same knob the DELAY module's "tone" control uses.
   const TILT_Q = 0.3;
-  const TILT_LP_OFF = 20000, TILT_LP_DARK = 500;
-  const TILT_HP_OFF = 20, TILT_HP_BRIGHT = 2500;
+  const TILT_LP_OFF = 20000, TILT_LP_DARK = 100;
+  const TILT_HP_OFF = 20, TILT_HP_BRIGHT = 3200;
   function tiltFilterFreqs(knob) {
     if (knob <= 0.5) {
       const t = (0.5 - knob) / 0.5;
