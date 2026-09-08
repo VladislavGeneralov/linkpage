@@ -207,6 +207,12 @@
     color: var(--ink-muted);
   }
 
+  .fader-value {
+    font-size: 11px;
+    color: var(--ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
   /* Grooved recessed track + gradient metal-cap thumb - a real fader cap,
      long axis perpendicular to the travel direction, same as physical
      hardware (Xone-style). */
@@ -216,7 +222,16 @@
     height: 44px;
     background: transparent;
   }
+  /* Inset by half the thumb's travel-direction depth (28px thumb here) so
+     the track's drawn ends line up with where the thumb's CENTER - and so
+     the grip stripe on it - reaches at min/max, not where the thumb's
+     outer edge reaches. Browsers keep the whole thumb within the input's
+     own width (inset by half its size automatically); without this the
+     track visually runs edge-to-edge and the stripe stops short of it by
+     14px at each end, same as a real fader's scribed line vs. its cap. */
   input[type="range"]::-webkit-slider-runnable-track {
+    width: calc(100% - 28px);
+    margin: 0 14px;
     height: 8px;
     background: repeating-linear-gradient(90deg, var(--groove), var(--groove) 2px, transparent 2px, transparent 16px), var(--groove);
     border: 1px solid var(--black);
@@ -253,6 +268,8 @@
     cursor: pointer;
   }
   input[type="range"]::-moz-range-track {
+    width: calc(100% - 28px);
+    margin: 0 14px;
     height: 8px;
     background: var(--groove);
     border: 1px solid var(--black);
@@ -384,6 +401,15 @@
     .mixer-fader-track input[type="range"]::-moz-range-thumb {
       width: 14px;
       height: 32px;
+    }
+    /* Re-inset by half of THIS thumb's depth (14px, not the desktop 28px). */
+    .mixer-fader-track input[type="range"]::-webkit-slider-runnable-track {
+      width: calc(100% - 14px);
+      margin: 0 7px;
+    }
+    .mixer-fader-track input[type="range"]::-moz-range-track {
+      width: calc(100% - 14px);
+      margin: 0 7px;
     }
 
     /* TAP, BPM value, and the tempo knob all sit in one row - no more
@@ -600,7 +626,7 @@
   // Knob centered (0.5) = both filters parked at their transparent extreme;
   // left sweeps a lowpass down (darkens each repeat), right sweeps a highpass
   // up (thins each repeat) - same knob the DELAY module's "tone" control uses.
-  const TILT_Q = 0.3;
+  const TILT_Q = 0.2;
   const TILT_LP_OFF = 20000, TILT_LP_DARK = 100;
   const TILT_HP_OFF = 20, TILT_HP_BRIGHT = 3200;
   function tiltFilterFreqs(knob) {
@@ -646,6 +672,13 @@
   const controlsById = {};
   const knobsById = {};
 
+  // IN's fader shows a plain 0-100% position but actually swings the input
+  // gain up to 16x, not 1:1 - a raw 0-1.2 fader (like the sends use) can't
+  // reach past unity-ish levels, and mic/line signals often need more than
+  // that to hit a useful level.
+  const IN_MAX_GAIN = 16;
+  const inGainFromFaderPct = v => (v / 100) * IN_MAX_GAIN;
+
   CHANNELS.forEach(ch => {
     const strip = document.createElement('div');
     strip.className = 'mixer-channel';
@@ -664,20 +697,37 @@
         '<div class="knob-group"><div class="knob" data-k="damp"></div><span class="knob-label">damp</span><span class="knob-value"></span></div>';
     }
 
+    // IN's fader is a plain 0-100% position - the actual gain it drives
+    // goes up to IN_MAX_GAIN (8x), not 1:1 with the displayed percentage.
+    // Default (10%) reproduces the old flat 0.8x starting gain exactly.
+    const faderAttrs = ch.id === 'in'
+      ? 'min="0" max="100" step="1" value="10"'
+      : 'min="0" max="1.2" step="0.01" value="0"';
+
     strip.innerHTML =
       '<div class="knob-row">' + knobsHtml + '</div>' +
-      '<div class="mixer-fader-track"><input type="range" class="mixer-fader" min="0" max="1.2" step="0.01" value="' + (ch.id === 'in' ? 0.8 : 0) + '"></div>' +
+      '<div class="mixer-fader-track"><input type="range" class="mixer-fader" ' + faderAttrs + '></div>' +
+      (ch.id === 'in' ? '<span class="fader-value" id="inFaderValue"></span>' : '') +
       '<span class="channel-num">' + ch.label + '</span>';
     channelsEl.appendChild(strip);
 
     const faderEl = strip.querySelector('.mixer-fader');
     controlsById[ch.id] = { faderEl };
 
+    if (ch.id === 'in') {
+      const inFaderValueEl = strip.querySelector('#inFaderValue');
+      inFaderValueEl.textContent = Math.round(parseFloat(faderEl.value)) + '%';
+      controlsById.in.valueEl = inFaderValueEl;
+    }
+
     faderEl.addEventListener('input', () => {
       const v = parseFloat(faderEl.value);
+      if (ch.id === 'in') {
+        controlsById.in.valueEl.textContent = Math.round(v) + '%';
+      }
       if (!audioCtx) return;
       if (ch.id === 'in') {
-        if (inputGainNode) inputGainNode.gain.setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME);
+        if (inputGainNode) inputGainNode.gain.setTargetAtTime(inGainFromFaderPct(v), audioCtx.currentTime, SMOOTH_TIME);
       } else if (ch.reverb) {
         if (reverbSendGain) reverbSendGain.gain.setTargetAtTime(v, audioCtx.currentTime, SMOOTH_TIME);
       } else {
@@ -874,7 +924,7 @@
       const source = audioCtx.createMediaStreamSource(stream);
 
       inputGainNode = audioCtx.createGain();
-      inputGainNode.gain.value = parseFloat(controlsById.in.faderEl.value);
+      inputGainNode.gain.value = inGainFromFaderPct(parseFloat(controlsById.in.faderEl.value));
       source.connect(inputGainNode);
 
       // IN's own tone knob - same tilt filter as the delays' TONE, just
