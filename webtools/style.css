@@ -1,0 +1,100 @@
+@font-face {
+  font-family: "Adventor";
+  src: url("fonts/texgyreadventor-regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Adventor";
+  src: url("fonts/texgyreadventor-bold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  margin: 0;
+  padding: 28px 0 56px;
+  background: #0E0F12;
+  color: #ffffff;
+
+  font-family: "Adventor", Arial, sans-serif;
+
+  line-height: 1.5;
+
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+
+  opacity: 0;
+  animation: fadeIn 0.6s forwards;
+  touch-action: manipulation;
+}
+
+@keyframes fadeIn {
+  to { opacity: 1; }
+}
+
+.top-bolt {
+  max-width: 800px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.top-bolt img {
+  display: block;
+  width: 42px;
+  height: 42px;
+  filter: brightness(0) invert(71%) sepia(75%) saturate(334%) hue-rotate(0deg) brightness(77%) contrast(126%);
+}
+
+.module {
+  max-width: 800px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+h2 {
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  font-size: 20px;
+}
+
+p {
+  margin: 6px 0;
+  opacity: 0.92;
+  font-size: 16px;
+}
+
+a {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: #b3b3b3;
+  text-decoration: underline;
+  font-size: 15px;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: #D5A430;
+}
+
+#fx {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+}
