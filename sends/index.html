@@ -25,14 +25,23 @@
 
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
-  html, body { height: 100%; margin: 0; }
+  html, body { margin: 0; }
 
   /* Kiosk-style gesture lockdown - same convention as kladmineralovweb/SCDJ/
      webloooper: no pinch-zoom, no swipe-back/overscroll bounce, no
-     accidental text selection or long-press callouts. Knobs and faders
-     handle their own drag via pointer events / native slider behavior,
-     which touch-action:none doesn't block. */
+     accidental text selection or long-press callouts. Knobs and the fader
+     inputs each carry their own touch-action:none for drag, so the page
+     itself only needs pan-y (not none) - SCDJ's own reasoning applies here
+     too: seven stacked channel rows can be taller than a phone viewport,
+     so vertical scroll has to stay available as the safety net (matches
+     SCDJ's .booth comment: "natural content height + page scroll", no
+     forced viewport-height). */
+  html {
+    overscroll-behavior: none;
+    touch-action: pan-y;
+  }
   body {
+    min-height: 100vh;
     background: var(--black);
     color: var(--text);
     font-family: Arial, Helvetica, sans-serif;
@@ -41,7 +50,7 @@
     justify-content: center;
     padding: 20px;
     overscroll-behavior: none;
-    touch-action: none;
+    touch-action: pan-y;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
@@ -98,6 +107,24 @@
   .seq-bpm-value {
     -moz-appearance: textfield;
     appearance: textfield;
+  }
+
+  /* Third way to set tempo, alongside TAP and typing into the value field
+     above - a plain (unrotated) horizontal range, same base fader look but
+     with its own compact cap: the bpm-channel column is narrow on desktop
+     and this sits among small buttons on mobile, so the 28x64 main-fader
+     cap would dominate it. */
+  .seq-bpm-slider {
+    width: 100%;
+  }
+  .seq-bpm-slider::-webkit-slider-thumb {
+    width: 14px;
+    height: 32px;
+    margin-top: -12px;
+  }
+  .seq-bpm-slider::-moz-range-thumb {
+    width: 14px;
+    height: 32px;
   }
 
   .tap-btn-round {
@@ -319,7 +346,7 @@
       width: 100%;
       max-width: 480px;
       margin: 0 auto;
-      padding: 16px;
+      padding: 16px 10px;
     }
 
     .mixer-channels {
@@ -341,10 +368,21 @@
       width: 36px;
       height: 36px;
     }
+    /* Indicator geometry (top/width/height/transform-origin) is tuned in
+       absolute px against the 48px desktop knob - it doesn't scale with
+       the knob itself, so the 36px mobile knob needs its own numbers or
+       the rotation pivot ends up below the knob's actual center. */
+    .knob::after {
+      top: 5px;
+      width: 3px;
+      height: 12px;
+      transform-origin: 50% 13px;
+    }
 
     /* Fader goes back to being a genuinely horizontal <input type=range> -
        just undo the desktop rotate(-90deg) wrapper trick entirely instead
-       of rotating the other way. */
+       of rotating the other way. Cap shrunk too - the desktop 28x64 size
+       was tuned for a tall 360px vertical throw, not a compact mobile row. */
     .mixer-fader-track {
       position: static;
       width: auto;
@@ -359,23 +397,58 @@
       transform: none;
     }
     .mixer-fader-track input[type="range"]::-webkit-slider-thumb {
+      width: 14px;
+      height: 32px;
+      margin-top: -12px;
       background:
         linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
         linear-gradient(180deg, var(--black2), var(--black));
     }
     .mixer-fader-track input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 32px;
       background:
         linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
         linear-gradient(180deg, var(--black2), var(--black));
     }
 
     .bpm-channel {
+      flex-wrap: wrap;
       justify-content: flex-start;
-      width: auto;
+      gap: 6px;
+      width: 100%;
       border-right: none;
       padding-right: 0;
       border-bottom: 1px solid var(--black2);
       padding-bottom: 14px;
+    }
+    .bpm-channel .knob-label,
+    .bpm-channel .seq-bpm-value,
+    .bpm-channel .tap-btn-round,
+    .bpm-channel .reset-btn-small {
+      flex-shrink: 0;
+    }
+    .bpm-channel .seq-bpm-value {
+      width: 2.5em;
+      font-size: 16px;
+    }
+    .bpm-channel .tap-btn-round {
+      width: 40px;
+      height: 40px;
+      font-size: 10px;
+    }
+    /* Forces TAP/RESET onto their own line regardless of exact viewport
+       width - a flex-basis:100% item in a wrapping row always starts a new
+       line, so this doesn't depend on guessing how much horizontal room a
+       given phone actually has (label+value+slider stay on line 1). */
+    .bpm-break {
+      flex-basis: 100%;
+      height: 0;
+    }
+    .bpm-channel .seq-bpm-slider {
+      flex: 1;
+      width: auto;
+      min-width: 30px;
     }
 
     /* VU meter: two horizontal bars (L above R) instead of two vertical
@@ -409,6 +482,8 @@
     <div class="mixer-channel bpm-channel">
       <span class="knob-label">bpm</span>
       <input class="seq-bpm-value" id="bpmValue" type="number" step="0.1" min="0" value="140.0">
+      <input class="seq-bpm-slider" id="bpmSlider" type="range" min="30" max="300" step="0.1" value="140">
+      <div class="bpm-break"></div>
       <button class="tap-btn-round" id="tapBtn">TAP</button>
       <button class="reset-btn-small" id="resetBtn">RESET</button>
     </div>
@@ -432,6 +507,7 @@
   let meterDataR = null;
 
   const bpmValue = document.getElementById('bpmValue');
+  const bpmSlider = document.getElementById('bpmSlider');
   const tapBtn = document.getElementById('tapBtn');
   const resetBtn = document.getElementById('resetBtn');
   const channelsEl = document.getElementById('channels');
@@ -441,9 +517,15 @@
   const RESET_GAP_MS = 2000;
   let currentBpm = 0;
 
+  // Three interlocked ways to set tempo - TAP, typing into bpmValue, and
+  // bpmSlider - all funnel through here so they can never show conflicting
+  // numbers. bpmSlider.value assignment self-clamps to its own 30-300
+  // range (native <input> behavior), even when TAP produces something
+  // outside it.
   function setBpm(value) {
     currentBpm = value;
     bpmValue.value = value.toFixed(1);
+    bpmSlider.value = value;
     updateDelayTimes();
   }
 
@@ -470,8 +552,13 @@
     const val = parseFloat(bpmValue.value);
     if (!isNaN(val)) {
       currentBpm = val;
+      bpmSlider.value = val;
       updateDelayTimes();
     }
+  });
+
+  bpmSlider.addEventListener('input', () => {
+    setBpm(parseFloat(bpmSlider.value));
   });
 
   resetBtn.addEventListener('click', () => {
