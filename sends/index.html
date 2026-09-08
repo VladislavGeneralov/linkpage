@@ -205,12 +205,14 @@
     letter-spacing: 1px;
     text-transform: uppercase;
     color: var(--ink-muted);
+    margin-top: 6px;
   }
 
   .fader-value {
     font-size: 11px;
     color: var(--ink-muted);
     font-variant-numeric: tabular-nums;
+    margin-top: 6px;
   }
 
   /* Grooved recessed track + gradient metal-cap thumb - a real fader cap,
@@ -222,19 +224,18 @@
     height: 44px;
     background: transparent;
   }
-  /* Inset by half the thumb's travel-direction depth (28px thumb here) so
-     the track's drawn ends line up with where the thumb's CENTER - and so
-     the grip stripe on it - reaches at min/max, not where the thumb's
-     outer edge reaches. Browsers keep the whole thumb within the input's
-     own width (inset by half its size automatically); without this the
-     track visually runs edge-to-edge and the stripe stops short of it by
-     14px at each end, same as a real fader's scribed line vs. its cap. */
+  /* Invisible - height only, so the browser's own thumb-centering math
+     (which assumes an 8px track) still lands right; the VISIBLE groove is a
+     separate .fader-groove div (see .mixer-fader-track below). Needed
+     because Chrome ignores an explicit width/margin on this pseudo-element
+     (verified), so it can't be resized independently of the <input> it
+     belongs to - and the <input> itself has to be oversized by the thumb's
+     own depth for the grip stripe (thumb center) to reach the track's true
+     ends (see the .mixer-fader-track comment for why). */
   input[type="range"]::-webkit-slider-runnable-track {
-    width: calc(100% - 28px);
-    margin: 0 14px;
     height: 8px;
-    background: repeating-linear-gradient(90deg, var(--groove), var(--groove) 2px, transparent 2px, transparent 16px), var(--groove);
-    border: 1px solid var(--black);
+    background: transparent;
+    border: none;
   }
   /* Grip stripe runs perpendicular to the travel direction (90deg = a
      vertical band, correct as-is for this un-rotated horizontal fader).
@@ -268,27 +269,50 @@
     cursor: pointer;
   }
   input[type="range"]::-moz-range-track {
-    width: calc(100% - 28px);
-    margin: 0 14px;
     height: 8px;
-    background: var(--groove);
-    border: 1px solid var(--black);
+    background: transparent;
+    border: none;
   }
 
   /* Vertical fader = the same horizontal <input type=range> above, rotated
      -90deg inside a fixed-size wrapper. No separate thumb gradient override
      needed here - the base rule's grip stripe is already perpendicular to
-     travel before rotation, so rotating the whole thumb keeps it correct. */
+     travel before rotation, so rotating the whole thumb keeps it correct.
+
+     The visible groove is a plain, fixed-size .fader-groove div, NOT the
+     native track - a native thumb's CENTER (where the grip stripe sits)
+     only travels from half-its-depth to (input width - half-its-depth), so
+     on an exactly-360-wide input the stripe stops 14px short of each true
+     end. Chrome ignores width/margin set on ::-webkit-slider-runnable-track
+     (verified), so the native track can't be shrunk to compensate. Instead
+     the <input> is widened by the thumb's own depth (28px) - still centered
+     via the same transform - so the thumb's reachable center range becomes
+     exactly [0, 360]. The cap's black body (wider than the input's own
+     44px-wide box after rotation? no - wider along the NOW-widened 388px
+     travel axis) is free to overhang .fader-groove at the extremes, same as
+     a real fader cap overhanging the end of its panel scale - nothing clips
+     it, and .fader-groove's own fixed 360px length never changes. */
   .mixer-fader-track {
     position: relative;
     width: 44px;
     height: 360px;
   }
+  .fader-groove {
+    position: absolute;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    width: 8px;
+    height: 100%;
+    background: repeating-linear-gradient(180deg, var(--groove), var(--groove) 2px, transparent 2px, transparent 16px), var(--groove);
+    border: 1px solid var(--black);
+    pointer-events: none;
+  }
   .mixer-fader-track input[type="range"] {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 360px;
+    width: 388px;
     height: 44px;
     margin: 0;
     transform: translate(-50%, -50%) rotate(-90deg);
@@ -352,6 +376,13 @@
       border-bottom: 1px solid var(--black2);
     }
 
+    /* Row layout, not a column - the desktop "extra gap before the label"
+       margin-top would just misalign the row's vertical centering here. */
+    .channel-num,
+    .fader-value {
+      margin-top: 0;
+    }
+
     .knob {
       width: 36px;
       height: 36px;
@@ -379,17 +410,33 @@
     /* Fader goes back to being a genuinely horizontal <input type=range> -
        just undo the desktop rotate(-90deg) wrapper trick entirely instead
        of rotating the other way. Cap shrunk too - the desktop 28x64 size
-       was tuned for a tall 360px vertical throw, not a compact mobile row. */
+       was tuned for a tall 360px vertical throw, not a compact mobile row.
+       position:relative (not static) so .fader-groove below has this as
+       its positioning parent instead of some further-up ancestor. */
     .mixer-fader-track {
-      position: static;
+      position: relative;
       width: auto;
       height: 44px;
       flex: 1;
       min-width: 0;
     }
+    /* Horizontal groove now - full width of the (unchanged) wrapper, same
+       fixed-length-track-vs-oversized-input split as desktop, mirrored to
+       this axis. Tick gradient direction flips to 90deg (vertical ticks
+       along a horizontal groove) since this is authored directly in final
+       orientation, not pre-rotation space like the desktop rule. */
+    .fader-groove {
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 100%;
+      height: 8px;
+      background: repeating-linear-gradient(90deg, var(--groove), var(--groove) 2px, transparent 2px, transparent 16px), var(--groove);
+    }
     .mixer-fader-track input[type="range"] {
       position: static;
-      width: 100%;
+      width: calc(100% + 14px);
+      margin-left: -7px;
       height: 44px;
       transform: none;
     }
@@ -401,15 +448,6 @@
     .mixer-fader-track input[type="range"]::-moz-range-thumb {
       width: 14px;
       height: 32px;
-    }
-    /* Re-inset by half of THIS thumb's depth (14px, not the desktop 28px). */
-    .mixer-fader-track input[type="range"]::-webkit-slider-runnable-track {
-      width: calc(100% - 14px);
-      margin: 0 7px;
-    }
-    .mixer-fader-track input[type="range"]::-moz-range-track {
-      width: calc(100% - 14px);
-      margin: 0 7px;
     }
 
     /* TAP, BPM value, and the tempo knob all sit in one row - no more
@@ -627,8 +665,8 @@
   // left sweeps a lowpass down (darkens each repeat), right sweeps a highpass
   // up (thins each repeat) - same knob the DELAY module's "tone" control uses.
   const TILT_Q = 0.2;
-  const TILT_LP_OFF = 20000, TILT_LP_DARK = 100;
-  const TILT_HP_OFF = 20, TILT_HP_BRIGHT = 3200;
+  const TILT_LP_OFF = 20000, TILT_LP_DARK = 400;
+  const TILT_HP_OFF = 20, TILT_HP_BRIGHT = 2600;
   function tiltFilterFreqs(knob) {
     if (knob <= 0.5) {
       const t = (0.5 - knob) / 0.5;
@@ -676,7 +714,7 @@
   // gain up to 16x, not 1:1 - a raw 0-1.2 fader (like the sends use) can't
   // reach past unity-ish levels, and mic/line signals often need more than
   // that to hit a useful level.
-  const IN_MAX_GAIN = 16;
+  const IN_MAX_GAIN = 12.8;
   const inGainFromFaderPct = v => (v / 100) * IN_MAX_GAIN;
 
   CHANNELS.forEach(ch => {
@@ -698,7 +736,7 @@
     }
 
     // IN's fader is a plain 0-100% position - the actual gain it drives
-    // goes up to IN_MAX_GAIN (8x), not 1:1 with the displayed percentage.
+    // goes up to IN_MAX_GAIN (12.8x), not 1:1 with the displayed percentage.
     // Default (10%) reproduces the old flat 0.8x starting gain exactly.
     const faderAttrs = ch.id === 'in'
       ? 'min="0" max="100" step="1" value="10"'
@@ -706,7 +744,7 @@
 
     strip.innerHTML =
       '<div class="knob-row">' + knobsHtml + '</div>' +
-      '<div class="mixer-fader-track"><input type="range" class="mixer-fader" ' + faderAttrs + '></div>' +
+      '<div class="mixer-fader-track"><div class="fader-groove"></div><input type="range" class="mixer-fader" ' + faderAttrs + '></div>' +
       (ch.id === 'in' ? '<span class="fader-value" id="inFaderValue"></span>' : '') +
       '<span class="channel-num">' + ch.label + '</span>';
     channelsEl.appendChild(strip);
