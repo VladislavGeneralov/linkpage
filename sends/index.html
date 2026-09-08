@@ -85,6 +85,12 @@
     padding-right: 24px;
   }
 
+  .bpm-label-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   /* Also the manual-entry field - typing a number in directly is just
      editing the same input the tap-tempo result is displayed in. */
   .seq-bpm-value {
@@ -246,6 +252,12 @@
     background: repeating-linear-gradient(90deg, var(--groove), var(--groove) 2px, transparent 2px, transparent 16px), var(--groove);
     border: 1px solid var(--black);
   }
+  /* Grip stripe runs perpendicular to the travel direction (90deg = a
+     vertical band, correct as-is for this un-rotated horizontal fader).
+     Rotating the whole thumb -90deg for a vertical fader (see
+     .mixer-fader-track below) turns that same vertical band horizontal -
+     still perpendicular to ITS travel direction - so one gradient angle
+     serves both orientations without a per-context override. */
   input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
@@ -254,7 +266,7 @@
     margin-top: -28px;
     border-radius: 6px;
     background:
-      linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
+      linear-gradient(90deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
       linear-gradient(180deg, var(--black2), var(--black));
     border: 1px solid var(--black);
     box-shadow: 0 2px 4px rgba(0, 0, 0, .6);
@@ -265,7 +277,7 @@
     height: 64px;
     border-radius: 6px;
     background:
-      linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
+      linear-gradient(90deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
       linear-gradient(180deg, var(--black2), var(--black));
     border: 1px solid var(--black);
     box-shadow: 0 2px 4px rgba(0, 0, 0, .6);
@@ -278,9 +290,9 @@
   }
 
   /* Vertical fader = the same horizontal <input type=range> above, rotated
-     -90deg inside a fixed-size wrapper - the grip-groove gradient direction
-     is pre-rotated 90deg the other way so it still reads horizontal on the
-     cap after the rotation lands. */
+     -90deg inside a fixed-size wrapper. No separate thumb gradient override
+     needed here - the base rule's grip stripe is already perpendicular to
+     travel before rotation, so rotating the whole thumb keeps it correct. */
   .mixer-fader-track {
     position: relative;
     width: 44px;
@@ -294,16 +306,6 @@
     height: 44px;
     margin: 0;
     transform: translate(-50%, -50%) rotate(-90deg);
-  }
-  .mixer-fader-track input[type="range"]::-webkit-slider-thumb {
-    background:
-      linear-gradient(90deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
-      linear-gradient(180deg, var(--black2), var(--black));
-  }
-  .mixer-fader-track input[type="range"]::-moz-range-thumb {
-    background:
-      linear-gradient(90deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
-      linear-gradient(180deg, var(--black2), var(--black));
   }
 
   .meter-channel {
@@ -379,6 +381,16 @@
       transform-origin: 50% 13px;
     }
 
+    /* Fixed width for whatever sits before the slider (knobs, or the bpm
+       label+value) - every row's slider then starts at the same x and, with
+       flex:1 on the slider filling the same remaining space, ends at the
+       same x too, regardless of how many knobs that row happens to have. */
+    .knob-row,
+    .bpm-label-group {
+      width: 100px;
+      flex-shrink: 0;
+    }
+
     /* Fader goes back to being a genuinely horizontal <input type=range> -
        just undo the desktop rotate(-90deg) wrapper trick entirely instead
        of rotating the other way. Cap shrunk too - the desktop 28x64 size
@@ -400,16 +412,10 @@
       width: 14px;
       height: 32px;
       margin-top: -12px;
-      background:
-        linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
-        linear-gradient(180deg, var(--black2), var(--black));
     }
     .mixer-fader-track input[type="range"]::-moz-range-thumb {
       width: 14px;
       height: 32px;
-      background:
-        linear-gradient(180deg, transparent 44%, var(--metal-hi) 44%, var(--metal-hi) 56%, transparent 56%),
-        linear-gradient(180deg, var(--black2), var(--black));
     }
 
     .bpm-channel {
@@ -480,8 +486,10 @@
 
   <div class="mixer-channels" id="channels">
     <div class="mixer-channel bpm-channel">
-      <span class="knob-label">bpm</span>
-      <input class="seq-bpm-value" id="bpmValue" type="number" step="0.1" min="0" value="140.0">
+      <div class="bpm-label-group">
+        <span class="knob-label">bpm</span>
+        <input class="seq-bpm-value" id="bpmValue" type="number" step="0.1" min="0" value="140.0">
+      </div>
       <input class="seq-bpm-slider" id="bpmSlider" type="range" min="30" max="300" step="0.1" value="140">
       <div class="bpm-break"></div>
       <button class="tap-btn-round" id="tapBtn">TAP</button>
