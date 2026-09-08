@@ -843,6 +843,14 @@
     try {
       const masterGain = audioCtx.createGain();
       masterGain.gain.value = 1;
+      // Most phone mics are mono, and per spec that should auto-upmix to
+      // both channels through any default GainNode/BiquadFilter chain
+      // (channelCountMode "max") - but that upmix isn't reliable on every
+      // mobile browser in practice. Force it explicitly here so the VU
+      // meter's L/R split always gets real signal on both sides.
+      masterGain.channelCount = 2;
+      masterGain.channelCountMode = 'explicit';
+      masterGain.channelInterpretation = 'speakers';
       masterGain.connect(audioCtx.destination);
 
       const meterSplitter = audioCtx.createChannelSplitter(2);
