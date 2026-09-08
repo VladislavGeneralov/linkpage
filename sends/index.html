@@ -67,15 +67,6 @@
     width: min(1800px, 98vw);
   }
 
-  .cell-title {
-    display: block;
-    margin-bottom: 20px;
-    font-size: 12px;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--ink-muted);
-  }
-
   .bpm-channel {
     justify-content: center;
     gap: 14px;
@@ -115,24 +106,6 @@
     appearance: textfield;
   }
 
-  /* Third way to set tempo, alongside TAP and typing into the value field
-     above - a plain (unrotated) horizontal range, same base fader look but
-     with its own compact cap: the bpm-channel column is narrow on desktop
-     and this sits among small buttons on mobile, so the 28x64 main-fader
-     cap would dominate it. */
-  .seq-bpm-slider {
-    width: 100%;
-  }
-  .seq-bpm-slider::-webkit-slider-thumb {
-    width: 14px;
-    height: 32px;
-    margin-top: -12px;
-  }
-  .seq-bpm-slider::-moz-range-thumb {
-    width: 14px;
-    height: 32px;
-  }
-
   .tap-btn-round {
     width: 64px;
     height: 64px;
@@ -149,19 +122,6 @@
   .tap-btn-round:active {
     background: var(--metal);
     color: var(--black);
-  }
-
-  .reset-btn-small {
-    height: 20px;
-    padding: 0 8px;
-    border: 1px solid var(--black);
-    background: linear-gradient(180deg, var(--black2), var(--black));
-    color: var(--text);
-    font-family: inherit;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    cursor: pointer;
   }
 
   .mixer-channels {
@@ -381,12 +341,11 @@
       transform-origin: 50% 13px;
     }
 
-    /* Fixed width for whatever sits before the slider (knobs, or the bpm
-       label+value) - every row's slider then starts at the same x and, with
-       flex:1 on the slider filling the same remaining space, ends at the
-       same x too, regardless of how many knobs that row happens to have. */
-    .knob-row,
-    .bpm-label-group {
+    /* Fixed width for whatever sits before the slider (knobs) - every row's
+       slider then starts at the same x and, with flex:1 on the slider
+       filling the same remaining space, ends at the same x too, regardless
+       of how many knobs that row happens to have. */
+    .knob-row {
       width: 100px;
       flex-shrink: 0;
     }
@@ -418,21 +377,18 @@
       height: 32px;
     }
 
+    /* TAP, BPM value, and the tempo knob all sit in one row - no more
+       content here than that now that RESET is gone and the slider is a
+       compact knob instead of a stretchy track, so it fits without needing
+       a forced line break. */
     .bpm-channel {
-      flex-wrap: wrap;
       justify-content: flex-start;
-      gap: 6px;
+      gap: 12px;
       width: 100%;
       border-right: none;
       padding-right: 0;
       border-bottom: 1px solid var(--black2);
       padding-bottom: 14px;
-    }
-    .bpm-channel .knob-label,
-    .bpm-channel .seq-bpm-value,
-    .bpm-channel .tap-btn-round,
-    .bpm-channel .reset-btn-small {
-      flex-shrink: 0;
     }
     .bpm-channel .seq-bpm-value {
       width: 2.5em;
@@ -442,19 +398,6 @@
       width: 40px;
       height: 40px;
       font-size: 10px;
-    }
-    /* Forces TAP/RESET onto their own line regardless of exact viewport
-       width - a flex-basis:100% item in a wrapping row always starts a new
-       line, so this doesn't depend on guessing how much horizontal room a
-       given phone actually has (label+value+slider stay on line 1). */
-    .bpm-break {
-      flex-basis: 100%;
-      height: 0;
-    }
-    .bpm-channel .seq-bpm-slider {
-      flex: 1;
-      width: auto;
-      min-width: 30px;
     }
 
     /* VU meter: two horizontal bars (L above R) instead of two vertical
@@ -482,18 +425,14 @@
 <body>
 
 <div class="cell">
-  <span class="cell-title">SENDS</span>
-
   <div class="mixer-channels" id="channels">
     <div class="mixer-channel bpm-channel">
       <div class="bpm-label-group">
         <span class="knob-label">bpm</span>
         <input class="seq-bpm-value" id="bpmValue" type="number" step="0.1" min="0" value="140.0">
       </div>
-      <input class="seq-bpm-slider" id="bpmSlider" type="range" min="30" max="300" step="0.1" value="140">
-      <div class="bpm-break"></div>
+      <div class="knob-group"><div class="knob" id="bpmKnob"></div><span class="knob-label">tempo</span></div>
       <button class="tap-btn-round" id="tapBtn">TAP</button>
-      <button class="reset-btn-small" id="resetBtn">RESET</button>
     </div>
   </div>
 </div>
@@ -513,11 +452,12 @@
   let reverbNode = null;
   let meterDataL = null;
   let meterDataR = null;
+  // Declared before makeKnob/setBpm exist below - assigned once the tempo
+  // knob is built, guarded everywhere else so early calls are a no-op.
+  let bpmKnob = null;
 
   const bpmValue = document.getElementById('bpmValue');
-  const bpmSlider = document.getElementById('bpmSlider');
   const tapBtn = document.getElementById('tapBtn');
-  const resetBtn = document.getElementById('resetBtn');
   const channelsEl = document.getElementById('channels');
 
   let tapTimes = [];
@@ -525,15 +465,14 @@
   const RESET_GAP_MS = 2000;
   let currentBpm = 0;
 
-  // Three interlocked ways to set tempo - TAP, typing into bpmValue, and
-  // bpmSlider - all funnel through here so they can never show conflicting
-  // numbers. bpmSlider.value assignment self-clamps to its own 30-300
-  // range (native <input> behavior), even when TAP produces something
-  // outside it.
+  // Two interlocked ways to set tempo - TAP and typing into bpmValue - plus
+  // the tempo knob, all funnel through here so they can never show
+  // conflicting numbers. bpmKnob.set() self-clamps to its own 30-300 range,
+  // even when TAP produces something outside it.
   function setBpm(value) {
     currentBpm = value;
     bpmValue.value = value.toFixed(1);
-    bpmSlider.value = value;
+    if (bpmKnob) bpmKnob.set(value);
     updateDelayTimes();
   }
 
@@ -560,18 +499,9 @@
     const val = parseFloat(bpmValue.value);
     if (!isNaN(val)) {
       currentBpm = val;
-      bpmSlider.value = val;
+      if (bpmKnob) bpmKnob.set(val);
       updateDelayTimes();
     }
-  });
-
-  bpmSlider.addEventListener('input', () => {
-    setBpm(parseFloat(bpmSlider.value));
-  });
-
-  resetBtn.addEventListener('click', () => {
-    tapTimes = [];
-    setBpm(140);
   });
 
   setBpm(140);
@@ -623,6 +553,11 @@
       min, max
     };
   }
+
+  bpmKnob = makeKnob(document.getElementById('bpmKnob'), {
+    min: 30, max: 300, value: 140,
+    onChange: v => setBpm(v)
+  });
 
   // Feedback-loop tilt filter - ported from NEWRACK's delayFeedbackFilterFreqs.
   // Knob centered (0.5) = both filters parked at their transparent extreme;
