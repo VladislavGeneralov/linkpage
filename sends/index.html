@@ -82,6 +82,15 @@
     gap: 8px;
   }
 
+  /* Desktop: bpm-channel is a column (label+value, tempo knob, TAP) - move
+     the knob-row to the top via order so the tempo knob sits at the same
+     height as every other channel's knob row, instead of wherever it falls
+     in DOM order. Undone at mobile (below), where DOM order left-to-right
+     (bpm, value, tempo, TAP) is what we actually want. */
+  .bpm-channel .knob-row {
+    order: -1;
+  }
+
   /* Also the manual-entry field - typing a number in directly is just
      editing the same input the tap-tempo result is displayed in. */
   .seq-bpm-value {
@@ -380,10 +389,11 @@
     /* TAP, BPM value, and the tempo knob all sit in one row - no more
        content here than that now that RESET is gone and the slider is a
        compact knob instead of a stretchy track, so it fits without needing
-       a forced line break. */
+       a forced line break. Same gap as every other channel row, for
+       consistent horizontal spacing top to bottom. */
     .bpm-channel {
       justify-content: flex-start;
-      gap: 12px;
+      gap: 16px;
       width: 100%;
       border-right: none;
       padding-right: 0;
@@ -393,6 +403,33 @@
     .bpm-channel .seq-bpm-value {
       width: 2.5em;
       font-size: 16px;
+    }
+    /* Undo the desktop reorder - DOM order (bpm, value, tempo, TAP) is the
+       correct left-to-right reading order here. Also strip the knob-row's
+       desktop-only sizing (56px min-height, bottom alignment) since without
+       those this is just a bare knob sitting inline with the other items -
+       and take the "tempo" label out of flow (absolute) so it doesn't add
+       height to the row and throw off vertical centering the way it would
+       otherwise: a label-less TAP button and a label-bearing knob-group
+       have different total heights, so centering by bounding box would
+       align their DIFFERENT-SIZED BOXES, not the actual circles inside
+       them - the knob would visually sit higher than TAP's true center. */
+    .bpm-channel .knob-row {
+      order: 0;
+      width: auto;
+      min-height: 0;
+      align-items: center;
+    }
+    .bpm-channel .knob-row .knob-group {
+      position: relative;
+    }
+    .bpm-channel .knob-row .knob-label {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+      margin-top: 4px;
     }
     .bpm-channel .tap-btn-round {
       width: 40px;
@@ -431,7 +468,7 @@
         <span class="knob-label">bpm</span>
         <input class="seq-bpm-value" id="bpmValue" type="number" step="0.1" min="0" value="140.0">
       </div>
-      <div class="knob-group"><div class="knob" id="bpmKnob"></div><span class="knob-label">tempo</span></div>
+      <div class="knob-row"><div class="knob-group"><div class="knob" id="bpmKnob"></div><span class="knob-label">tempo</span></div></div>
       <button class="tap-btn-round" id="tapBtn">TAP</button>
     </div>
   </div>
