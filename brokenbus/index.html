@@ -2801,6 +2801,24 @@ function drawBlinders() {
   if (veil > 0) { g.fillStyle = `rgba(255,185,110,${Math.min(0.17, 0.052 * veil)})`; g.fillRect(0, 0, W, H); }
   g.globalCompositeOperation = 'source-over';
 }
+// скорость в углу: пиксельный шрифт 3×5 на сетке игры, правый нижний угол (подальше от выреза камеры)
+const SPD_GLYPH = {
+  0: ['111', '101', '101', '101', '111'], 1: ['010', '110', '010', '010', '111'], 2: ['111', '001', '111', '100', '111'],
+  3: ['111', '001', '111', '001', '111'], 4: ['101', '101', '111', '001', '001'], 5: ['111', '100', '111', '001', '111'],
+  6: ['111', '100', '111', '101', '111'], 7: ['111', '001', '010', '010', '010'], 8: ['111', '101', '111', '101', '111'],
+  9: ['111', '101', '111', '001', '111'], K: ['101', '101', '110', '101', '101'], M: ['101', '111', '111', '101', '101'],
+  H: ['101', '101', '111', '101', '101'], '/': ['001', '001', '010', '100', '100'], ' ': ['000', '000', '000', '000', '000'],
+};
+function drawSpeed() {
+  const txt = Math.round(Math.abs(car.speed) * 3.6) + ' KM/H';
+  const g = fx2d, w = txt.length * 4 - 1, x0 = RES_W - 4 - w, y0 = RES_H - 4 - 5;
+  for (const [col, dx, dy] of [['rgba(0,0,0,0.55)', 1, 1], ['rgba(255,255,255,0.85)', 0, 0]]) {   // тень, потом текст
+    g.fillStyle = col;
+    [...txt].forEach((ch, i) => (SPD_GLYPH[ch] || SPD_GLYPH[' ']).forEach((row, y) => [...row].forEach((b, x) => {
+      if (b === '1') g.fillRect(x0 + i * 4 + x + dx, y0 + y + dy, 1, 1);
+    })));
+  }
+}
 function drawFlare() {
   const W = RES_W, H = RES_H, g = fx2d;
   g.clearRect(0, 0, W, H);
@@ -2930,6 +2948,7 @@ function frame(now) {
   renderFrame();
   drawFlare();
   drawBlinders();
+  drawSpeed();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
