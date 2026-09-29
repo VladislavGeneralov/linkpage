@@ -2571,25 +2571,26 @@ const k = (...codes) => codes.some(c => keys[c]);
 
 // Телефон: невидимая сетка 3×3.
 //   верх и середина: левая колонка — вперёд с поворотом налево, средняя — вперёд прямо, правая — вперёд направо;
-//   низ: левая — назад с рулём налево, средняя — назад прямо, правая — назад с рулём направо.
+//   низ: левая — назад с рулём налево, средняя — назад прямо + ручник (полосы), правая — назад с рулём направо.
 // Едешь вперёд и зажал низ — сначала тормозит, остановился — сдаёт назад.
 const touches = new Map();                            // pointerId -> { dir: 1 | -1, turn: -1 | 0 | 1 }
 const touchZone = e => {
   const col = Math.min(2, Math.floor(e.clientX / (innerWidth / 3)));
   const row = Math.min(2, Math.floor(e.clientY / (innerHeight / 3)));
-  return { dir: row === 2 ? -1 : 1, turn: col - 1 };  // turn: -1 налево, 0 прямо, 1 направо
+  return { dir: row === 2 ? -1 : 1, turn: col - 1, hand: row === 2 && col === 1 };   // turn: -1 налево, 0 прямо, 1 направо
 };
 addEventListener('pointerdown', e => { touches.set(e.pointerId, touchZone(e)); e.preventDefault(); }, { passive: false });
 addEventListener('pointermove', e => { if (touches.has(e.pointerId)) touches.set(e.pointerId, touchZone(e)); });
 for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) addEventListener(ev, e => touches.delete(e.pointerId));
 addEventListener('contextmenu', e => e.preventDefault());
 const touchState = () => {
-  let fwd = false, rev = false, L = false, R = false;
+  let fwd = false, rev = false, L = false, R = false, hand = false;
   for (const z of touches.values()) {
     if (z.dir > 0) fwd = true; else rev = true;
+    if (z.hand) hand = true;
     if (z.turn < 0) L = true; else if (z.turn > 0) R = true;
   }
-  return { fwd, rev, L, R };
+  return { fwd, rev, L, R, hand };
 };
 
 // ---------- Автопилот (O) ----------
@@ -2673,7 +2674,7 @@ function update(dt) {
   const up = k('KeyW', 'ArrowUp') || (t2.fwd && !t2.rev);
   const down = k('KeyS', 'ArrowDown') || (t2.rev && !t2.fwd);         // тормоз, остановился — задний ход
   const left = k('KeyA', 'ArrowLeft') || (t2.L && !t2.R), right = k('KeyD', 'ArrowRight') || (t2.R && !t2.L);
-  const hand = k('Space');
+  const hand = k('Space') || t2.hand;                   // низ-центр — ещё и ручник (полосы)
   const ap = autopilot.on ? autopilotInput(dt) : null;
   const manualPedals = up || down, manualSteer = left || right;
 
