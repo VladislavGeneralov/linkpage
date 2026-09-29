@@ -2569,15 +2569,24 @@ addEventListener('keyup', e => {
 // (если отпустил в другом окне и режим "залип" — нажми и отпусти клавишу ещё раз).
 const k = (...codes) => codes.some(c => keys[c]);
 
-// Телефон: две невидимые кнопки — левая и правая половины экрана, обе — "газ".
-// Обе зажаты — вперёд прямо; только левая — поворот налево на полгаза; только правая — направо.
-const touches = new Map();                            // pointerId -> 'L' | 'R'
-const touchSide = e => (e.clientX < innerWidth / 2 ? 'L' : 'R');
+// Телефон: невидимые зоны.
+// Верхние GAS_ZONE экрана — газ вперёд одним пальцем (полный, прямо).
+// Середина: левая и правая половины — два "газа": обе — вперёд прямо, только левая — поворот налево
+// на полгаза, только правая — направо (вместе с верхней зоной — поворот на полном газу).
+// Нижние BRAKE_ZONE — тормоз и он же ручник (оставляет полосы); остановившись, назад не сдаёт.
+const GAS_ZONE = 0.2, BRAKE_ZONE = 0.2;
+const touches = new Map();                            // pointerId -> 'F' | 'L' | 'R' | 'B'
+const touchSide = e => (e.clientY < innerHeight * GAS_ZONE ? 'F'
+  : e.clientY > innerHeight * (1 - BRAKE_ZONE) ? 'B' : e.clientX < innerWidth / 2 ? 'L' : 'R');
 addEventListener('pointerdown', e => { touches.set(e.pointerId, touchSide(e)); e.preventDefault(); }, { passive: false });
 addEventListener('pointermove', e => { if (touches.has(e.pointerId)) touches.set(e.pointerId, touchSide(e)); });
 for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) addEventListener(ev, e => touches.delete(e.pointerId));
 addEventListener('contextmenu', e => e.preventDefault());
-const touchState = () => { let L = false, R = false; for (const s of touches.values()) { if (s === 'L') L = true; else R = true; } return { L, R }; };
+const touchState = () => {
+  let F = false, L = false, R = false, B = false;
+  for (const s of touches.values()) { if (s === 'F') F = true; else if (s === 'L') L = true; else if (s === 'R') R = true; else B = true; }
+  return { F, L, R, B };
+};
 const TOUCH_TURN_GAS = 0.5;                           // газ при повороте одной половиной
 
 // ---------- Автопилот (O) ----------
@@ -2658,10 +2667,11 @@ function autopilotInput(dt) {
 // ---------- Физика ----------
 function update(dt) {
   const t2 = touchState();
-  const up = k('KeyW', 'ArrowUp') || (t2.L && t2.R), down = k('KeyS', 'ArrowDown');
+  const up = k('KeyW', 'ArrowUp') || t2.F || (t2.L && t2.R);
+  const down = k('KeyS', 'ArrowDown') || (t2.B && car.speed > 0.3);   // тормоз зоной — без заднего хода
   const left = k('KeyA', 'ArrowLeft') || (t2.L && !t2.R), right = k('KeyD', 'ArrowRight') || (t2.R && !t2.L);
-  const touchTurn = (t2.L !== t2.R);                   // одна половина — поворот на полгаза
-  const hand = k('Space');
+  const touchTurn = (t2.L !== t2.R) && !t2.F;          // одна половина без верхней зоны — поворот на полгаза
+  const hand = k('Space') || t2.B;                      // тормозная зона — ещё и ручник (полосы)
   const ap = autopilot.on ? autopilotInput(dt) : null;
   const manualPedals = up || down || touchTurn, manualSteer = left || right;
 
