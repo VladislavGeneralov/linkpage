@@ -2569,25 +2569,28 @@ addEventListener('keyup', e => {
 // (если отпустил в другом окне и режим "залип" — нажми и отпусти клавишу ещё раз).
 const k = (...codes) => codes.some(c => keys[c]);
 
-// Телефон: невидимые зоны.
-// Верхние GAS_ZONE экрана — газ вперёд одним пальцем (полный, прямо).
-// Середина: левая и правая половины — два "газа": обе — вперёд прямо, только левая — поворот налево
-// на полгаза, только правая — направо (вместе с верхней зоной — поворот на полном газу).
-// Нижние BRAKE_ZONE — тормоз и он же ручник (оставляет полосы); остановившись, назад не сдаёт.
-const GAS_ZONE = 0.2, BRAKE_ZONE = 0.2;
-const touches = new Map();                            // pointerId -> 'F' | 'L' | 'R' | 'B'
-const touchSide = e => (e.clientY < innerHeight * GAS_ZONE ? 'F'
-  : e.clientY > innerHeight * (1 - BRAKE_ZONE) ? 'B' : e.clientX < innerWidth / 2 ? 'L' : 'R');
-addEventListener('pointerdown', e => { touches.set(e.pointerId, touchSide(e)); e.preventDefault(); }, { passive: false });
-addEventListener('pointermove', e => { if (touches.has(e.pointerId)) touches.set(e.pointerId, touchSide(e)); });
+// Телефон: невидимая сетка 3×3.
+//   верх и середина: левая колонка — вперёд с поворотом налево, средняя — вперёд прямо, правая — вперёд направо;
+//   низ: левая — назад с рулём налево, средняя — назад прямо, правая — назад с рулём направо.
+// Едешь вперёд и зажал низ — сначала тормозит, остановился — сдаёт назад.
+const touches = new Map();                            // pointerId -> { dir: 1 | -1, turn: -1 | 0 | 1 }
+const touchZone = e => {
+  const col = Math.min(2, Math.floor(e.clientX / (innerWidth / 3)));
+  const row = Math.min(2, Math.floor(e.clientY / (innerHeight / 3)));
+  return { dir: row === 2 ? -1 : 1, turn: col - 1 };  // turn: -1 налево, 0 прямо, 1 направо
+};
+addEventListener('pointerdown', e => { touches.set(e.pointerId, touchZone(e)); e.preventDefault(); }, { passive: false });
+addEventListener('pointermove', e => { if (touches.has(e.pointerId)) touches.set(e.pointerId, touchZone(e)); });
 for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) addEventListener(ev, e => touches.delete(e.pointerId));
 addEventListener('contextmenu', e => e.preventDefault());
 const touchState = () => {
-  let F = false, L = false, R = false, B = false;
-  for (const s of touches.values()) { if (s === 'F') F = true; else if (s === 'L') L = true; else if (s === 'R') R = true; else B = true; }
-  return { F, L, R, B };
+  let fwd = false, rev = false, L = false, R = false;
+  for (const z of touches.values()) {
+    if (z.dir > 0) fwd = true; else rev = true;
+    if (z.turn < 0) L = true; else if (z.turn > 0) R = true;
+  }
+  return { fwd, rev, L, R };
 };
-const TOUCH_TURN_GAS = 0.5;                           // газ при повороте одной половиной
 
 // ---------- Автопилот (O) ----------
 // Держит свою полосу через "погоню за точкой" впереди, как живой водитель:
@@ -2667,17 +2670,16 @@ function autopilotInput(dt) {
 // ---------- Физика ----------
 function update(dt) {
   const t2 = touchState();
-  const up = k('KeyW', 'ArrowUp') || t2.F || (t2.L && t2.R);
-  const down = k('KeyS', 'ArrowDown') || (t2.B && car.speed > 0.3);   // тормоз зоной — без заднего хода
+  const up = k('KeyW', 'ArrowUp') || (t2.fwd && !t2.rev);
+  const down = k('KeyS', 'ArrowDown') || (t2.rev && !t2.fwd);         // тормоз, остановился — задний ход
   const left = k('KeyA', 'ArrowLeft') || (t2.L && !t2.R), right = k('KeyD', 'ArrowRight') || (t2.R && !t2.L);
-  const touchTurn = (t2.L !== t2.R) && !t2.F;          // одна половина без верхней зоны — поворот на полгаза
-  const hand = k('Space') || t2.B;                      // тормозная зона — ещё и ручник (полосы)
+  const hand = k('Space');
   const ap = autopilot.on ? autopilotInput(dt) : null;
-  const manualPedals = up || down || touchTurn, manualSteer = left || right;
+  const manualPedals = up || down, manualSteer = left || right;
 
   // педали нажимаются не мгновенно; тяга дизеля падает с ростом скорости
   const pedal = (v, to, press, release) => v + Math.max(-release * dt, Math.min(press * dt, to - v));
-  const gasTo = ap && !manualPedals ? ap.gas : up ? 1 : touchTurn ? TOUCH_TURN_GAS : 0;
+  const gasTo = ap && !manualPedals ? ap.gas : up ? 1 : 0;
   const brakeTo = ap && !manualPedals ? ap.brake : down ? 1 : 0;
   car.gas = pedal(car.gas, gasTo, GAS_PRESS, GAS_RELEASE);
   car.brake = pedal(car.brake, brakeTo, BRAKE_PRESS, GAS_RELEASE);
