@@ -1,0 +1,2938 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Pixel Bus</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none;
+    touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  #game, #flare {
+    position: absolute; inset: 0; margin: auto;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+  }
+  #flare { pointer-events: none; }
+  /* обычный режим: контраст и насыщенность итогового кадра; в режиме Y (синька) — без фильтра */
+  :root { --contrast: 1.1; --saturate: 1.2; }
+  #view { position: fixed; inset: 0; filter: contrast(var(--contrast)) saturate(var(--saturate)); }
+  #view.xray { filter: none; }
+</style>
+</head>
+<body>
+<div id="view">
+  <canvas id="game"></canvas>
+  <canvas id="flare"></canvas>
+</div>
+<audio id="music" src="track.mp3" loop preload="auto"></audio>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="track_data.js"></script>
+<script>
+// ---------- Настройки ----------
+// 4:5 как афиша BROKEN17 (3548×4435). Высота прежняя (270) — пиксель того же размера, на 1080p ровно ×4.
+// Для 16:9 было 480×270 и CAM_FOV 55.
+// телефон: вертикальный кадр под пропорции экрана; высота 320 пикселей игры, ширина — по экрану
+const RES_H = 320;
+const RES_W = Math.max(140, Math.min(320, Math.round(RES_H * innerWidth / innerHeight)));
+const CAM_FOV = 60;                      // вертикальный угол обзора (чуть шире, чтобы по бокам меньше обрезалось)
+const ROAD_WIDTH = 10;                   // асфальт
+const SHOULDER = 2.5;                    // обочина с каждой стороны
+const MAX_SPEED = 36, MAX_REVERSE = 8;   // м/с (~130 км/ч)
+const ACCEL = 5.5, BRAKE = 14, DRAG = 2;
+const GAS_PRESS = 0.9, BRAKE_PRESS = 1.8; // 1/с — как быстро педаль доходит до пола
+const GAS_RELEASE = 3;                    // 1/с — как быстро педаль отпускается
+const HAND_DRAG = 0.8;                    // м/с² — ручник почти не тормозит, зато оставляет следы
+// руль тугой, как у настоящего автобуса: колёса поворачиваются с ограниченной скоростью,
+// а сам кузов набирает скорость поворота с инерцией
+const MAX_STEER = 0.5, WHEELBASE = 5.7;
+const STEER_RATE = 0.28;                 // рад/с — как быстро крутятся колёса под рукой
+const STEER_RETURN = 0.4;                // рад/с — самовозврат руля, когда отпустил
+const YAW_LAG = 0.45;                    // с — инерция кузова по курсу
+
+// качание под музыку (данные из analyze_track.py -> track_data.js)
+const AUDIO_LOOKAHEAD = 0.1;             // с — упреждение: задержка звука + кадры отрисовки
+const SWAY_ROLL = 0.035;                 // рад — крен влево-вправо на долях
+const KICK_HOP = 0.2;                    // м — подпрыгивание кузова на бочке
+const BASS_LIFT = 0.05;                  // м — лёгкий подъём от общего баса
+
+// ---------- Рендер ----------
+const canvas = document.getElementById('game');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+renderer.setPixelRatio(1);
+renderer.setClearColor(0x000000, 0);     // прозрачная очистка — нужна слою "чётких" объектов
+
+// ---------- Вывод кадра: пиксельный мир + (по выбору) чёткие объекты режима Y + фишай ----------
+// Холст — в полном экранном разрешении. Мир рисуется в маленький кадр (2× от RES для фишая),
+// а итоговый шейдер берёт его по пиксельной сетке RES_W×RES_H — ступеньки пикселей сохраняются.
+// То, что обнажает режим Y, живёт в слое 1: либо дорисовывается в тот же пиксельный кадр,
+// либо (галочка "чёткие") рисуется отдельно в полном разрешении с перекрытием сценой.
+// Фишай — бочка: углы кадра на месте, центр раздувается; к обоим слоям одинаково.
+const FISHEYE = 0.19;                    // сила бочки: 0 — выкл, 0.3 — заметно, 0.6 — сильно
+const REVEAL_LAYER = 1;
+const XRAY_PIXEL_DIV = 4;                // во сколько раз мельче пиксель мира в режимах Y/U
+const lowRT = new THREE.WebGLRenderTarget(RES_W * 2, RES_H * 2,
+  { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+const hiRT = new THREE.WebGLRenderTarget(RES_W, RES_H,
+  { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+const FISH_ASPECT = RES_W / RES_H;
+const outScene = new THREE.Scene(), outCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const outMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tLow: { value: lowRT.texture }, tHi: { value: hiRT.texture }, useHi: { value: 0 },
+    k: { value: FISHEYE }, aspect: { value: FISH_ASPECT }, res: { value: new THREE.Vector2(RES_W, RES_H) },
+    hiTexel: { value: new THREE.Vector2(1, 1) }, glowAmount: { value: 0.6 },
+  },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tLow, tHi; uniform float useHi, k, aspect, glowAmount;
+    uniform vec2 res, hiTexel; varying vec2 vUv;
+    vec2 fish(vec2 uv) {
+      vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+      float r2 = dot(p, p) / (0.25 * (aspect * aspect + 1.0));   // 1 — в углу кадра
+      vec2 q = p * (1.0 + k * (r2 - 1.0));                      // бочка: угол на месте, центр крупнее
+      return q / vec2(aspect, 1.0) + 0.5;
+    }
+    void main() {
+      vec2 uvq = (floor(vUv * res) + 0.5) / res;                // пиксельная сетка мира
+      vec3 c = texture2D(tLow, fish(uvq)).rgb;
+      // чёткий слой очищен прозрачным чёрным, поэтому его цвет уже умножен на прозрачность
+      if (useHi > 0.5) {
+        vec2 u = fish(vUv);
+        vec4 h = texture2D(tHi, u);
+        // свечение: средняя непрозрачность слоя на двух кольцах вокруг (3 и 6 px)
+        vec3 g = vec3(0.0);                                        // свечение — цвета самой структуры
+        for (int i = 0; i < 8; i++) {
+          float an = float(i) * 0.785398;
+          vec2 d = vec2(cos(an), sin(an)) * hiTexel;
+          g += texture2D(tHi, u + d * 3.0).rgb + 0.6 * texture2D(tHi, u + d * 6.0).rgb;
+        }
+        g /= 12.8;
+        c += g * glowAmount * (1.0 - h.a);
+        c = c * (1.0 - h.a) + h.rgb;
+      }
+      gl_FragColor = vec4(c, 1.0);
+    }`,
+  depthTest: false, depthWrite: false,
+});
+outScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outMat));
+
+// ---------- Режим U: Y + ложные цвета по плотности ----------
+// Готовый кадр Y рисуется в compRT, затем шейдер перекрашивает нереальное (жилы, лианы, ток) как научный
+// снимок в ложных цветах: цвет задаёт не объект, а маска нереального (слой hiRT) и её плотность вокруг.
+// Солнце — исключение, у него тоже двойной контур. Реальные объекты (ЛЭП, заборы, автобус) остаются
+// как в Y и получают только одинарный тонкий (1 px) янтарный контур.
+// Одиночные линии — бледные, близкие к фону, с тонким ободком дополнительного (янтарного) цвета там,
+// где линия уходит в фон; густые места и пересечения "вскипают" ступенями от светлого к тёмному,
+// вокруг них — неровный ступенчатый ореол. Переходы жёсткие (постеризация), без мягких градиентов.
+const compRT = new THREE.WebGLRenderTarget(RES_W, RES_H,
+  { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+// маска каркаса автобуса: отдельный класс для "слива на сливу" (чтобы автобус не пересекался сам с собой)
+const busIdRT = new THREE.WebGLRenderTarget(RES_W, RES_H,
+  { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+// маска: красный канал — каркас автобуса, зелёный — пассажир; без глубины и со сложением,
+// чтобы в месте наложения были оба (для "пересечения разных групп")
+const BUS_ID_MAT = new THREE.MeshBasicMaterial({ color: 0xff0000, blending: THREE.AdditiveBlending, depthTest: false, transparent: true });
+const PAX_ID_MAT = new THREE.MeshBasicMaterial({ color: 0x00ff00, blending: THREE.AdditiveBlending, depthTest: false, transparent: true });
+// маска прочего нереального без автобуса (автобус не закрывает жилы за ним — видно пересечения)
+const othersRT = new THREE.WebGLRenderTarget(RES_W, RES_H,
+  { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+const uScene = new THREE.Scene();
+const uMat = new THREE.ShaderMaterial({
+  uniforms: {
+    tComp: { value: compRT.texture }, tHi: { value: hiRT.texture }, texel: { value: new THREE.Vector2(1, 1) },
+    bg: { value: new THREE.Color(0x0a50ff) },          // синий фон режима Y
+    k: { value: FISHEYE }, aspect: { value: FISH_ASPECT },
+    sunUV: { value: new THREE.Vector3(0, 0, 0) },      // солнце на экране: центр (uv) и радиус с ореолом
+    tBus: { value: busIdRT.texture }, tOthers: { value: othersRT.texture },
+    overlapEach: { value: 0.55 }, overlapHeat: { value: 0.857 }, uTime: { value: 0 },   // присутствие каждой группы; суммарная ступень   // "слива на сливу": минимум своей плотности у каждой из двух групп
+  },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tComp, tHi, tBus, tOthers; uniform vec2 texel; uniform vec3 bg, sunUV; uniform float k, aspect, overlapEach, overlapHeat, uTime;
+    varying vec2 vUv;
+    float lineness(vec3 c) { return smoothstep(0.12, 0.85, distance(c, bg)); }   // 0 — фон, 1 — что-то нарисовано
+    vec2 fish(vec2 uv) {                                   // тот же фишай, что при сведении кадра
+      vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+      float r2 = dot(p, p) / (0.25 * (aspect * aspect + 1.0));
+      return p * (1.0 + k * (r2 - 1.0)) / vec2(aspect, 1.0) + 0.5;
+    }
+    // маска: нереальное (слой hiRT) + исключение — солнце с ореолом, у него маска по цвету кадра
+    float sunW(vec2 uv) {
+      if (sunUV.z <= 0.0) return 0.0;
+      float d = length((uv - sunUV.xy) * vec2(aspect, 1.0)) / sunUV.z;
+      return 1.0 - smoothstep(0.9, 1.0, d);
+    }
+    float unreal(vec2 uv) {
+      float m = texture2D(tHi, fish(uv)).a;
+      float sw = sunW(uv);
+      return sw > 0.0 ? max(m, sw * lineness(texture2D(tComp, uv).rgb)) : m;
+    }
+    // реальный объект: что-то нарисовано, но это не нереальное и не солнце
+    bool isReal(vec2 uv) {
+      return lineness(texture2D(tComp, uv).rgb) > 0.35 && texture2D(tHi, fish(uv)).a < 0.1 && sunW(uv) <= 0.0;
+    }
+    bool outlined(vec2 uv) { return isReal(uv); }                 // кого обводим тонкой линией
+    // группы: x — каркас автобуса, y — прочее нереальное (жилы, лианы, ток, гравий), z — солнце, w — пассажир
+    vec4 classes(vec2 uv) {
+      vec2 f = fish(uv);
+      vec4 id = texture2D(tBus, f);
+      float others = texture2D(tOthers, f).a;
+      float sw = sunW(uv);
+      float sun = sw > 0.0 ? sw * lineness(texture2D(tComp, uv).rgb) : 0.0;
+      return vec4(id.r, others, sun, id.g);
+    }
+    vec4 ringClasses(vec2 uv, float r) {
+      vec4 m = vec4(0.0);
+      for (int i = 0; i < 8; i++) {
+        float a = float(i) * 0.785398 + r * 0.37;
+        m += classes(uv + vec2(cos(a), sin(a)) * texel * r);
+      }
+      return m / 8.0;
+    }
+    float ringMask(vec2 uv, float r) {
+      float m = 0.0;
+      for (int i = 0; i < 8; i++) {
+        float a = float(i) * 0.785398 + r * 0.37;
+        m += unreal(uv + vec2(cos(a), sin(a)) * texel * r);
+      }
+      return m / 8.0;
+    }
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    vec3 hotLUT(float v) {                                 // ступени от светлого к тёмному
+      float i = floor(clamp(v, 0.0, 0.999) * 7.0);
+      if (i < 1.0) return vec3(0.66, 0.78, 1.00);          // бледно-голубой (близко к фону)
+      if (i < 2.0) return vec3(0.86, 0.94, 1.00);          // почти белый
+      if (i < 3.0) return vec3(1.00, 0.95, 0.63);          // бледно-жёлтый
+      if (i < 4.0) return vec3(1.00, 0.75, 0.23);          // янтарный
+      if (i < 5.0) return vec3(1.00, 0.42, 0.16);          // оранжево-красный
+      if (i < 6.0) return vec3(0.82, 0.13, 0.29);          // малиновый
+      return vec3(0.35, 0.04, 0.31);                       // тёмная слива
+    }
+    void main() {
+      vec3 c = texture2D(tComp, vUv).rgb;
+      float m = unreal(vUv);
+      if (isReal(vUv)) { gl_FragColor = vec4(c, 1.0); return; }        // реальное — как в Y
+      // реальным — одинарный тонкий контур: фон, соседний (1 px) с реальным объектом
+      if (m < 0.1 && (outlined(vUv + vec2(texel.x, 0.0)) || outlined(vUv - vec2(texel.x, 0.0)) ||
+                      outlined(vUv + vec2(0.0, texel.y)) || outlined(vUv - vec2(0.0, texel.y)))) {
+        gl_FragColor = vec4(1.00, 0.62, 0.18, 1.0); return;
+      }
+      float near = ringMask(vUv, 1.5);                     // для ободка
+      vec4 dc = ringClasses(vUv, 4.0) * 0.45 + ringClasses(vUv, 9.0) * 0.35 + ringClasses(vUv, 16.0) * 0.2;
+      float dens = dc.x + dc.y + dc.z + dc.w;
+      float rag = (hash(floor(vUv / texel / 3.0)) - 0.5) * 0.12;   // неровность ореолов
+      // слива на сливу: в точке присутствуют две РАЗНЫЕ группы (пиксель на линии группы или её плотность
+      // ≥ overlapEach), и вместе они дошли до сливы -> бело-голубой. Внутри одной группы потолок — слива.
+      vec4 hc = max(dc * 1.35, classes(vUv));              // присутствие группы: своя линия или своя плотность
+      float groups = step(overlapEach, hc.x) + step(overlapEach, hc.y) + step(overlapEach, hc.z) + step(overlapEach, hc.w);
+      if (groups >= 2.0 && dens * 1.35 + rag >= overlapHeat) {
+        // кислотный бирюзовый градиент: извилистые полосы 5 неоновых оттенков, медленно текут, ступенями
+        vec2 q = vUv * vec2(aspect, 1.0);
+        float t = fract(q.x * 7.0 + q.y * 4.0 + sin(q.y * 23.0 + uTime * 0.9) * 0.35 + sin(q.x * 17.0 - uTime * 0.7) * 0.25 + uTime * 0.12);
+        float b = floor(t * 5.0);
+        vec3 acid = b < 1.0 ? vec3(0.25, 0.94, 1.00)       // #3ff0ff бирюзовый
+                  : b < 2.0 ? vec3(0.00, 0.78, 1.00)       // #00c8ff голубой
+                  : b < 3.0 ? vec3(0.50, 1.00, 0.83)       // #7fffd4 аквамарин
+                  : b < 4.0 ? vec3(0.72, 1.00, 1.00)       // #b8ffff почти белый бирюзовый
+                  :           vec3(0.16, 0.55, 1.00);      // #2a8cff синий неон
+        gl_FragColor = vec4(acid, 1.0);
+        return;
+      }
+      float heat = min(dens * 1.35 + rag, 0.99);             // сам с собой — максимум слива
+      vec3 rim = vec3(1.00, 0.62, 0.18);                   // дополнительный к синему — янтарь
+      vec3 col;
+      if (m > 0.35) {
+        // на линии: тонкая — бледная, в тон фону; густая — вскипает по ступеням
+        col = heat < 0.28 ? mix(bg, vec3(1.0), 0.55) : hotLUT(heat + m * 0.1);
+      } else if (m > 0.08 || near > 0.18) {
+        col = heat < 0.28 ? rim : hotLUT(heat);            // край линии: ободок; у густых — ореол
+      } else {
+        col = heat > 0.22 ? mix(c, hotLUT(heat), 0.85) : c; // фон: ступенчатый ореол у скоплений
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+  depthTest: false, depthWrite: false,
+});
+uScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), uMat));
+const DEPTH_ONLY = new THREE.MeshBasicMaterial({ colorWrite: false });
+let xrayMode = null;                     // активный режим обнажения: 'Y' | 'U' | null
+const smoothReveal = () => true;         // объекты режима Y всегда чёткие (пиксельный вариант оставлен в коде: false)
+let revealHideForDepth = [];             // что не должно перекрывать чёткий слой (корпус-призрак)
+
+// солнце на экране (с учётом фишая) — для двойного контура в режиме U
+const _sp = new THREE.Vector3(), _sp2 = new THREE.Vector3(), _camUp = new THREE.Vector3();
+function updateSunUV() {
+  const out = uMat.uniforms.sunUV.value;
+  _sp.copy(sunGroup.position).project(camera);
+  if (_sp.z > 1) { out.set(0, 0, 0); return; }                 // позади камеры
+  _camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+  _sp2.copy(sunGroup.position).addScaledVector(_camUp, SUN_R * 3).project(camera);   // край ореола
+  const [u1, v1] = fishForward((_sp.x + 1) / 2, (_sp.y + 1) / 2);
+  const [u2, v2] = fishForward((_sp2.x + 1) / 2, (_sp2.y + 1) / 2);
+  out.set(u1, v1, Math.hypot((u2 - u1) * FISH_ASPECT, v2 - v1));
+}
+function renderFrame() {
+  // 1) мир (слой 0) в пиксельный кадр; в пиксельном стиле туда же — объекты режима Y (слой 1)
+  const hiOn = worldXray && smoothReveal();
+  // в режимах Y/U мир в 4 раза мельче по пикселю (сетка RES×4), в обычном — RES (кадр рисуется в 2× для фишая)
+  const grid = worldXray ? XRAY_PIXEL_DIV : 1, lw = RES_W * Math.max(2, grid), lh = RES_H * Math.max(2, grid);
+  if (lowRT.width !== lw || lowRT.height !== lh) lowRT.setSize(lw, lh);
+  outMat.uniforms.res.value.set(RES_W * grid, RES_H * grid);
+  renderer.setRenderTarget(lowRT);
+  camera.layers.set(0);
+  renderer.render(scene, camera);
+  const bg = scene.background;
+  if (worldXray && !hiOn) {
+    camera.layers.set(REVEAL_LAYER);
+    renderer.autoClear = false;
+    scene.background = null;             // цветной фон заставил бы three.js залить кадр и стереть мир
+    renderer.render(scene, camera);      // глубина мира сохранилась — перекрытие верное
+    scene.background = bg;
+    renderer.autoClear = true;
+  }
+  // 2) чёткий стиль: глубина мира в полном разрешении (без цвета), затем слой 1 поверх
+  if (hiOn) {
+    renderer.setRenderTarget(hiRT);
+    scene.background = null;             // прозрачный слой: без заливки фоном
+    scene.overrideMaterial = DEPTH_ONLY;
+    const hidden = revealHideForDepth.filter(o => o.visible);
+    for (const o of hidden) o.visible = false;
+    camera.layers.set(0);
+    renderer.render(scene, camera);
+    for (const o of hidden) o.visible = true;
+    scene.overrideMaterial = null;
+    camera.layers.set(REVEAL_LAYER);
+    renderer.autoClear = false;
+    renderer.render(scene, camera);
+    renderer.autoClear = true;
+    scene.background = bg;
+  }
+  camera.layers.set(0);
+  // 3) итог на экран с фишаем
+  outMat.uniforms.useHi.value = hiOn ? 1 : 0;
+  if (xrayMode === 'U') {                    // U: сначала готовый кадр Y, потом ложные цвета по плотности
+    updateSunUV();
+    renderer.setRenderTarget(busIdRT);         // маска каркаса автобуса (без корпуса-призрака)
+    renderer.clear();
+    const saved = [], hull = bus.userData.hull, hullVis = hull.visible;
+    hull.visible = false;
+    const paxGroup = passengerRig && passengerRig.group;
+    bus.traverse(o => {
+      if (!o.isMesh) return;
+      let isPax = false;
+      for (let q = o; q; q = q.parent) if (q === paxGroup) { isPax = true; break; }
+      saved.push([o, o.material]);
+      o.material = isPax ? PAX_ID_MAT : BUS_ID_MAT;
+    });
+    camera.layers.set(REVEAL_LAYER);
+    renderer.render(bus, camera);
+    camera.layers.set(0);
+    for (const [o, m] of saved) o.material = m;
+    hull.visible = hullVis;
+    // прочее нереальное без автобуса: глубина мира (без автобуса), затем слой 1 (без автобуса)
+    renderer.setRenderTarget(othersRT);
+    const bgU = scene.background;
+    scene.background = null;
+    bus.visible = false;
+    if (soundRoot) soundRoot.visible = false;  // её глубину не пишем — она сама рисуется в слое 1
+    scene.overrideMaterial = DEPTH_ONLY;
+    renderer.render(scene, camera);
+    scene.overrideMaterial = null;
+    if (soundRoot) soundRoot.visible = true;
+    camera.layers.set(REVEAL_LAYER);
+    renderer.autoClear = false;
+    renderer.render(scene, camera);
+    renderer.autoClear = true;
+    camera.layers.set(0);
+    bus.visible = true;
+    scene.background = bgU;
+    renderer.setRenderTarget(compRT);
+    renderer.render(outScene, outCam);
+    renderer.setRenderTarget(null);
+    renderer.render(uScene, outCam);
+    return;
+  }
+  renderer.setRenderTarget(null);
+  renderer.render(outScene, outCam);
+}
+// где точка исходного кадра (uv 0..1) оказывается после бочки — для бликов (обратное отображение, Ньютон)
+function fishForward(u, v) {
+  if (FISHEYE <= 0) return [u, v];
+  const px = (u - 0.5) * FISH_ASPECT, py = v - 0.5, rs = Math.hypot(px, py);
+  if (rs < 1e-6) return [u, v];
+  const c2 = 0.25 * (FISH_ASPECT * FISH_ASPECT + 1), k = FISHEYE;
+  let r = rs;                                        // решаем r * (1 + k (r²/c2 - 1)) = rs
+  for (let i = 0; i < 8; i++) {
+    const f = r * (1 + k * (r * r / c2 - 1)) - rs, df = 1 + k * (3 * r * r / c2 - 1);
+    r -= f / df;
+  }
+  const s = r / rs;
+  return [px * s / FISH_ASPECT + 0.5, py * s + 0.5];
+}
+
+// блики — отдельный 2D-холст того же разрешения поверх игры
+const flareCanvas = document.getElementById('flare');
+flareCanvas.width = RES_W; flareCanvas.height = RES_H;
+const fx2d = flareCanvas.getContext('2d');
+
+function fitCanvas() {
+  const s = Math.min(innerWidth / RES_W, innerHeight / RES_H);    // телефон: на весь экран (не целый масштаб)
+  for (const c of [canvas, flareCanvas]) {
+    c.style.width = RES_W * s + 'px';
+    c.style.height = RES_H * s + 'px';
+  }
+  // холст игры — в полном разрешении экрана (для чёткого слоя); мир всё равно пиксельный
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = Math.round(RES_W * s * dpr), h = Math.round(RES_H * s * dpr);
+  renderer.setSize(w, h, false);
+  hiRT.setSize(w, h);
+  outMat.uniforms.hiTexel.value.set(1 / w, 1 / h);
+  compRT.setSize(w, h);
+  busIdRT.setSize(w, h);
+  othersRT.setSize(w, h);
+  uMat.uniforms.tHi.value = hiRT.texture;
+  uMat.uniforms.texel.value.set(1 / w, 1 / h);
+}
+addEventListener('resize', fitCanvas); fitCanvas();
+
+const scene = new THREE.Scene();
+const HAZE = 0xf5a070;                   // светлая закатная дымка у горизонта
+scene.background = new THREE.Color(HAZE);
+scene.fog = new THREE.Fog(HAZE, 90, 520);
+
+const camera = new THREE.PerspectiveCamera(CAM_FOV, RES_W / RES_H, 0.5, 2000);
+
+// Солнце: направление по горизонту (xz). Отсюда же азимут зарева на небе, диск и свет.
+// Солнце садится на западе, чуть левее курса на старте (старт едет по -Z, вправо = +X).
+const SUN_OFFSET_DEG = -15;              // насколько правее курса (минус — левее)
+const SUN_DIR = new THREE.Vector3(Math.sin(SUN_OFFSET_DEG * Math.PI / 180), 0, -Math.cos(SUN_OFFSET_DEG * Math.PI / 180));
+const SUN_U = (((Math.atan2(SUN_DIR.z, -SUN_DIR.x) / (2 * Math.PI)) % 1) + 1) % 1;   // UV сферы неба
+
+scene.add(new THREE.HemisphereLight(0xffd0b0, 0x806050, 0.95));
+const sun = new THREE.DirectionalLight(0xffa060, 1.0);    // низкое солнце у горизонта
+sun.position.set(SUN_DIR.x * 100, 12, SUN_DIR.z * 100);
+scene.add(sun);
+
+// Пиксельная текстура из canvas
+function pixelTexture(w, h, draw) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.magFilter = THREE.NearestFilter; t.minFilter = THREE.NearestFilter;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+function speckle(g, w, h, colors, n) {
+  for (let i = 0; i < n; i++) {
+    g.fillStyle = colors[(Math.random() * colors.length) | 0];
+    g.fillRect((Math.random() * w) | 0, (Math.random() * h) | 0, 1 + (Math.random() < 0.3), 1);
+  }
+}
+const lambert = (opts) => new THREE.MeshLambertMaterial(opts);
+
+// ---------- Режим Y: "синька" ----------
+// Пока держишь Y: заливки (небо, земля, дорога, холмы) — ровный синий в пару оттенков,
+// всё остальное (опоры, провода, отбойники, локаторы, каркас автобуса) — белое.
+// Объекту-заливке заранее ставится userData.xr = материал; без метки — белая конструкция.
+const XR_BLUE = { sky: 0x0a50ff, far: 0x0a52ff, near: 0x0846ec, ground: 0x0a46f0, shoulder: 0x0a42e6, road: 0x0a3ad8 };
+const XR_OPACITY = 0.72;                 // реальные конструкции в режиме Y: 0.82 × 0.88 (ещё на 12% прозрачнее)
+const XR_WHITE = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, transparent: true, opacity: XR_OPACITY });
+const XR_WHITE_LINE = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: XR_OPACITY });
+let worldXray = false;                   // включён ли сейчас режим Y
+
+// То, что режим Y "обнажает": живые жилы, лианы и ток. Общий шейдер: у каждой вершины aDist — путь
+// от корня (м). Всё белое и сплошное, движение — медленное извивание; у тока по проводам бегут
+// чёрточки. Вдали — растворение пиксельным дизерингом.
+// Цвет нереального задаётся полем в мире, а не по объектам: три медленные "плоские волны" разного
+// наклона (в т.ч. по высоте) дают плавные области. Оттенок — по цепочке фиолетовый - голубой -
+// бирюзовый - салатовый и обратно; переходы только между соседями.
+const UNREAL_PALETTE_GLSL = `
+  vec3 unrealColor(vec3 w) {
+    float f = 0.5 + 0.22 * sin(dot(w, vec3(0.018, 0.0065, 0.010)) + 1.3)
+                  + 0.18 * sin(dot(w, vec3(-0.008, 0.014, 0.019)) + 4.1)
+                  + 0.10 * sin(dot(w, vec3(0.027, -0.010, -0.014)) + 2.2);
+    // цепочка без замыкания: фиолетовый - голубой - бирюзовый - салатовый;
+    // "пила туда-обратно": соседние цвета переливаются только друг в друга, противоположные — никогда
+    float u = 1.0 - abs(fract(f * 1.3) * 2.0 - 1.0);   // 0..1 туда-обратно
+    vec3 c0 = vec3(0.84, 0.74, 1.00);   // фиолетовый  #d6bcff
+    vec3 c1 = vec3(0.68, 0.82, 1.00);   // голубой     #aed1ff
+    vec3 c2 = vec3(0.63, 0.96, 1.00);   // бирюзовый   #a1f5ff
+    vec3 c3 = vec3(0.66, 1.00, 0.78);   // мятный      #a8ffc7 (мягче, ближе к бирюзе)
+    // доли диапазона: фиолетовый->голубой 20%, голубой->бирюзовый 65%, бирюзовый->мятный 15% (зелёный редко)
+    if (u < 0.2) return mix(c0, c1, smoothstep(0.0, 0.2, u));
+    if (u < 0.85) return mix(c1, c2, smoothstep(0.2, 0.85, u));
+    return mix(c2, c3, smoothstep(0.85, 1.0, u));
+  }`;
+// Шевеление "щупалец": корень неподвижен, дальше от корня — сильнее; вдоль жилы ползёт очень
+// медленная волна (фаза зависит от aDist), поэтому движение плавное и ползучее, а не качание.
+const REVEAL_VERT = `
+  attribute float aDist; varying float vDist; varying float vViewZ; varying vec3 vWorld;
+  uniform float uTime, uSway, uSwayLen; uniform vec3 uSwayAxes;
+  void main() {
+    vDist = aDist;
+    vec3 p = position;
+    float k = clamp(aDist / uSwayLen, 0.0, 1.0);
+    k = k * k * (3.0 - 2.0 * k);
+    vec3 w = vec3(
+      sin(p.z * 0.045 + aDist * 0.07 - uTime * 0.31),
+      sin(p.x * 0.040 + aDist * 0.05 - uTime * 0.23),
+      cos(p.x * 0.050 + p.z * 0.03 + aDist * 0.06 - uTime * 0.27));
+    p += w * uSwayAxes * (uSway * k);
+    vWorld = (modelMatrix * vec4(p, 1.0)).xyz;
+    vec4 mv = modelViewMatrix * vec4(p, 1.0);
+    vViewZ = -mv.z;
+    gl_Position = projectionMatrix * mv;
+  }`;
+const REVEAL_FRAG = UNREAL_PALETTE_GLSL + `
+  uniform float uGrow, uTime, uSpeed, uPeriod, uFar, uDashes, uBright; uniform vec3 uColor, uHot;
+  varying float vDist; varying float vViewZ; varying vec3 vWorld;
+  float bayer2(vec2 a) { a = floor(a); return fract(a.x / 2.0 + a.y * a.y * 0.75); }
+  void main() {
+    if (vDist > uGrow) discard;
+    float fade = 1.0 - smoothstep(uFar * 0.55, uFar, vViewZ);
+    if (fade < bayer2(0.5 * gl_FragCoord.xy) * 0.25 + bayer2(gl_FragCoord.xy)) discard;
+    float ph = fract((vDist - uTime * uSpeed) / uPeriod);
+    if (uDashes > 0.5 && ph < 0.8) discard;           // ток: только бегущие чёрточки (жилы — сплошные)
+    gl_FragColor = vec4(unrealColor(vWorld) * uBright, 1.0);
+  }`;
+function revealMat(color, hot, speed, period, far) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uGrow: { value: 0 }, uTime: { value: 0 }, uSpeed: { value: speed }, uPeriod: { value: period },
+      uFar: { value: far }, uColor: { value: new THREE.Color(color) }, uHot: { value: new THREE.Color(hot) }, uDashes: { value: 0 },
+      uBright: { value: 1 },
+      uSway: { value: 0 }, uSwayLen: { value: 30 }, uSwayAxes: { value: new THREE.Vector3(1, 1, 1) },
+    },
+    vertexShader: REVEAL_VERT, fragmentShader: REVEAL_FRAG, side: THREE.DoubleSide,
+  });
+}
+const UNREAL_COLOR = 0xc4f7ff;           // нереальное: очень светлый голубо-бирюзовый (+ свечение при сведении)
+const VEIN_GROUND_MAT = revealMat(UNREAL_COLOR, 0xffffff, 30, 70, 420);  // жилы в поле
+const VEIN_ROAD_MAT = revealMat(UNREAL_COLOR, 0xffffff, 22, 40, 420);    // жилы на дороге
+let VEIN_SKY_MAT = revealMat(0xffffff, 0xffffff, 30, 60, 650);       // жилы в небе (ниже заменяется толстыми линиями)
+let VINE_MAT = revealMat(0xffffff, 0xffffff, 18, 45, 650);           // лианы на опорах (ниже — толстые линии)
+const WIRE_PULSE_MAT = revealMat(UNREAL_COLOR, 0xffffff, 140, 220, 900); // ток по проводам
+// нереальное на полу (поле, дорога) — на 14% темнее; лианы и небесные жилы — как есть
+const FLOOR_BRIGHTNESS = 0.86;
+for (const m of [VEIN_GROUND_MAT, VEIN_ROAD_MAT]) m.uniforms.uBright.value = FLOOR_BRIGHTNESS;
+// Жилы в небе и лианы — "толстые линии": каждый отрезок — полоска, развёрнутая к камере, толщина
+// в пикселях экрана. Толщина и непрозрачность зависят от расстояния камеры до опоры-корня (aRoot):
+// у ближайших опор — жирные и явные, у дальних — тонкие почти прозрачные волоски.
+const TENTACLE_NEAR = 170, TENTACLE_FAR = 320;   // м: до NEAR — в полную силу, после FAR — едва видно
+const FAT_VERT = `
+  attribute vec3 aOther; attribute float aDist, aOtherDist, aSide, aEnd, aTaper; attribute vec2 aRoot;
+  uniform float uTime, uSway, uSwayLen, uWidthMax, uNear, uFar2, uMinAlpha; uniform vec3 uSwayAxes, uCam; uniform vec2 uRes;
+  varying float vDist; varying float vViewZ; varying float vAlpha; varying vec3 vWorld;
+  vec3 sway(vec3 p, float d) {
+    float k = clamp(d / uSwayLen, 0.0, 1.0);
+    k = k * k * (3.0 - 2.0 * k);
+    vec3 w = vec3(
+      sin(p.z * 0.045 + d * 0.07 - uTime * 0.31),
+      sin(p.x * 0.040 + d * 0.05 - uTime * 0.23),
+      cos(p.x * 0.050 + p.z * 0.03 + d * 0.06 - uTime * 0.27));
+    return p + w * uSwayAxes * (uSway * k);
+  }
+  void main() {
+    vDist = aDist;
+    float e = 1.0 - smoothstep(uNear, uFar2, distance(uCam.xz, aRoot));   // 1 — ближняя опора
+    vAlpha = mix(uMinAlpha, 1.0, e);
+    vec3 ps = sway(position, aDist);
+    vWorld = (modelMatrix * vec4(ps, 1.0)).xyz;
+    vec4 mvSelf = modelViewMatrix * vec4(ps, 1.0);
+    vec4 cSelf = projectionMatrix * mvSelf;
+    vec4 cOther = projectionMatrix * modelViewMatrix * vec4(sway(aOther, aOtherDist), 1.0);
+    vViewZ = -mvSelf.z;
+    vec2 sSelf = cSelf.xy / max(cSelf.w, 1e-3) * uRes * 0.5;
+    vec2 sOther = cOther.xy / max(cOther.w, 1e-3) * uRes * 0.5;
+    vec2 dir = aEnd > 0.5 ? sSelf - sOther : sOther - sSelf;              // всегда от начала к концу
+    dir = length(dir) > 1e-4 ? normalize(dir) : vec2(1.0, 0.0);
+    float width = mix(1.0, uWidthMax, e) * aTaper;     // aTaper: толщина ветви и острый кончик
+    cSelf.xy += vec2(-dir.y, dir.x) * aSide * width * 0.5 / (uRes * 0.5) * cSelf.w;
+    gl_Position = cSelf;
+  }`;
+const FAT_FRAG = UNREAL_PALETTE_GLSL + `
+  uniform float uTime, uSpeed, uPeriod, uFar; uniform vec3 uColor;
+  varying float vDist; varying float vViewZ; varying float vAlpha; varying vec3 vWorld;
+  void main() {
+    float fade = 1.0 - smoothstep(uFar * 0.55, uFar, vViewZ);
+    gl_FragColor = vec4(unrealColor(vWorld), vAlpha * fade);
+  }`;
+function fatMat(speed, period, far, widthMax, minAlpha) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uSpeed: { value: speed }, uPeriod: { value: period }, uFar: { value: far },
+      uColor: { value: new THREE.Color(UNREAL_COLOR) }, uSway: { value: 0 }, uSwayLen: { value: 30 },
+      uSwayAxes: { value: new THREE.Vector3(1, 1, 1) }, uWidthMax: { value: widthMax },
+      uNear: { value: TENTACLE_NEAR }, uFar2: { value: TENTACLE_FAR }, uMinAlpha: { value: minAlpha },
+      uCam: { value: new THREE.Vector3() }, uRes: { value: new THREE.Vector2(1, 1) },
+    },
+    vertexShader: FAT_VERT, fragmentShader: FAT_FRAG,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+}
+// заменяем линейные материалы жил в небе и лиан на толстые
+VEIN_SKY_MAT = fatMat(30, 60, 650, 3, 0.12);   // [.., макс. толщина px, непрозрачность у дальних опор]
+VINE_MAT = fatMat(18, 45, 650, 5, 0.35);
+
+// Гравий режима U: мелкие камешки на асфальте. Непрозрачны вблизи (под автобусом и до GRAVEL_NEAR),
+// к GRAVEL_FAR исчезают. Живут в слое нереального, поэтому U обводит их двумя линиями.
+const GRAVEL_NEAR = 12, GRAVEL_FAR = 45;
+const GRAVEL_MAT = new THREE.ShaderMaterial({
+  uniforms: { uNear: { value: GRAVEL_NEAR }, uFar: { value: GRAVEL_FAR } },
+  vertexShader: `
+    varying vec3 vWorld; varying float vViewZ;
+    void main() {
+      vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vViewZ = -mv.z;
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: UNREAL_PALETTE_GLSL + `
+    uniform float uNear, uFar; varying vec3 vWorld; varying float vViewZ;
+    void main() {
+      float a = 1.0 - smoothstep(uNear, uFar, vViewZ);
+      if (a < 0.02) discard;
+      gl_FragColor = vec4(unrealColor(vWorld) * 0.9, a);
+    }`,
+  transparent: true, depthWrite: false, side: THREE.DoubleSide,
+});
+
+// шевеление: [амплитуда у кончиков (м), путь от корня до полной амплитуды (м), оси x/y/z]
+for (const [m, amp, len, axes] of [
+  [VEIN_GROUND_MAT, 3, 40, [1, 0.7, 1]],   // ползают по земле и вздымаются
+  [VEIN_ROAD_MAT, 0.5, 30, [1, 1.6, 1]],   // вбок слегка (остаются над асфальтом), вверх-вниз заметнее
+  [VEIN_SKY_MAT, 8, 50, [1, 0.6, 1]],      // тянутся в воздухе
+  [VINE_MAT, 0.8, 60, [1, 0.3, 1]],        // заметно, но не соскальзывают с опор
+]) { m.uniforms.uSway.value = amp; m.uniforms.uSwayLen.value = len; m.uniforms.uSwayAxes.value.set(...axes); }
+WIRE_PULSE_MAT.uniforms.uDashes.value = 1;   // провода реальные (пиксельные), чётко — только импульсы тока
+// жилы и провода всегда целиком (uGrow оставлен в шейдере на будущее — например, для прорастания)
+for (const m of [VEIN_GROUND_MAT, VEIN_ROAD_MAT, WIRE_PULSE_MAT]) m.uniforms.uGrow.value = 1e9;
+const tagFill = (obj, hex) => { obj.userData.xr = new THREE.MeshBasicMaterial({ color: hex, side: THREE.DoubleSide }); return obj; };
+
+// ---------- Небо ----------
+// Очень красочный закат: королевский синий сверху -> фиолетовый -> малиновый -> красный ->
+// оранжевый -> жёлтый у горизонта. Облака — крупные массы из шума: тени сине-фиолетовые,
+// подсвеченные края розовые/красные/оранжевые/жёлтые, к горизонту — тонкие яркие полосы.
+const SKY_STOPS = [[0, '#1a2ad8'], [0.3, '#2a4af0'], [0.5, '#8a3ae0'], [0.65, '#ff3a9a'],
+                   [0.8, '#ff2a3a'], [0.9, '#ff6a1a'], [1, '#ffb02a']];
+const CLOUD_SHADOW = [[0, '#1c1a9a'], [0.45, '#4a1ea8'], [0.75, '#7a1a78'], [1, '#9a2050']];
+const CLOUD_LIT = [[0, '#ff5ab8'], [0.45, '#ff3a78'], [0.7, '#ff2a2a'], [0.85, '#ff7a1a'], [1, '#ffe040']];
+const SKY_GAP = new THREE.Color('#5aa0ff');          // голубые просветы между облаками
+
+function rampColor(stops, t) {
+  t = Math.min(1, Math.max(0, t));
+  for (let i = 1; i < stops.length; i++) if (t <= stops[i][0]) {
+    const [t0, c0] = stops[i - 1], [t1, c1] = stops[i];
+    return new THREE.Color(c0).lerp(new THREE.Color(c1), (t - t0) / (t1 - t0));
+  }
+  return new THREE.Color(stops[stops.length - 1][1]);
+}
+// value-noise, по x зациклен (period ячеек), чтобы на шве сферы не было стыка
+function hash2(ix, iy) { const s = Math.sin(ix * 127.1 + iy * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, y, period) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const x0 = ((ix % period) + period) % period, x1 = (x0 + 1) % period;
+  const a = hash2(x0, iy), b = hash2(x1, iy), c = hash2(x0, iy + 1), d = hash2(x1, iy + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+function fbm(u, v, seed) {                           // u — доля окружности 0..1
+  let sum = 0, amp = 0.5, norm = 0;
+  for (let o = 0; o < 4; o++) {
+    const period = 10 << o;
+    sum += amp * vnoise(u * period, v * (1 << o) + seed * 17, period); norm += amp; amp *= 0.5;
+  }
+  return sum / norm;
+}
+
+const skyTex = pixelTexture(1024, 256, (g, w, h) => {
+  const H = h / 2;                                    // линия горизонта
+  const img = g.createImageData(w, h), px = img.data;
+  const put = (i, c) => { px[i] = c.r * 255; px[i + 1] = c.g * 255; px[i + 2] = c.b * 255; px[i + 3] = 255; };
+  const below = new THREE.Color('#ff9a50');
+  // перспектива: к горизонту облака сжимаются в тонкие полосы
+  const vAt = (y) => 2.2 / (1.25 - y / H);
+  for (let y = 0; y < h; y++) {
+    const hf = y / H;
+    const skyC = rampColor(SKY_STOPS, hf), shC = rampColor(CLOUD_SHADOW, hf), litC = rampColor(CLOUD_LIT, hf);
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (y >= H) { put(i, below); continue; }
+      const u = x / w;
+      let du = Math.abs(u - SUN_U); du = Math.min(du, 1 - du);
+      const sunF = Math.exp(-((du / 0.12) ** 2));      // близость к солнцу
+      const n = fbm(u, vAt(y), 1);
+      const thr = 0.5 - 0.06 * hf;
+      if (n < thr) {                                  // чистое небо; у краёв облаков — голубые просветы
+        put(i, hf < 0.55 && n > thr - 0.04 ? SKY_GAP : skyC);
+        continue;
+      }
+      // подсветка: ниже и ближе к солнцу — ярче; нижний край облака (дальше вниз его нет) — ярче
+      const under = fbm(u, vAt(Math.min(H - 1, y + 2)), 1) < n ? 0.3 : 0;
+      let L = hf * 1.1 - 0.3 + 0.6 * sunF + (fbm(u, vAt(y), 7) - 0.5) * 1.2 + under;
+      L = Math.round(Math.min(1, Math.max(0, L)) * 3) / 3;   // 4 ступени — пиксельная лесенка
+      put(i, shC.clone().lerp(litC, L));
+    }
+  }
+  g.putImageData(img, 0, 0);
+});
+const sky = new THREE.Mesh(
+  new THREE.SphereGeometry(1400, 32, 16),
+  new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false })
+);
+scene.add(sky);
+
+// ---------- Степь ----------
+const groundTex = pixelTexture(64, 64, (g, w, h) => {
+  g.fillStyle = '#a4875a'; g.fillRect(0, 0, w, h);
+  speckle(g, w, h, ['#977b4f', '#b09366', '#8e8a58', '#9a8a5c', '#b8a070'], 900);
+});
+groundTex.repeat.set(225, 225);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(9000, 9000), lambert({ map: groundTex }));
+ground.rotation.x = -Math.PI / 2;
+tagFill(ground, XR_BLUE.ground);
+scene.add(ground);
+
+// Дальние холмы: кольцо с неровным верхом
+const hillHeight = (a, maxH, seed) => Math.max(4,
+  maxH * (0.35 + 0.3 * Math.sin(a * 3 + seed) + 0.2 * Math.sin(a * 7 + seed * 2) + 0.15 * Math.sin(a * 17 + seed * 3)));
+function hillRing(radius, maxH, colTop, colBottom, seed) {
+  const N = 256, pos = [], col = [], idx = [];
+  const top = new THREE.Color(colTop), bot = new THREE.Color(colBottom);
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const x = Math.cos(a) * radius, z = Math.sin(a) * radius;
+    pos.push(x, -2, z, x, hillHeight(a, maxH, seed), z);
+    col.push(bot.r, bot.g, bot.b, top.r, top.g, top.b);
+    if (i < N) { const b = i * 2; idx.push(b, b + 1, b + 2, b + 1, b + 3, b + 2); }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  return new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false }));
+}
+// холмы едут вместе с камерой — всегда "на горизонте", трасса сквозь них не проходит
+const hills = new THREE.Group();
+const HILLS = [[1000, 55, '#c07a8a', '#f5a070', 1],        // дальние — в дымке
+               [750, 38, '#7a4a5a', '#c07060', 4]];        // ближние — силуэты
+for (const [r, h, top, bot, seed] of HILLS) hills.add(tagFill(hillRing(r, h, top, bot, seed), r > 800 ? XR_BLUE.far : XR_BLUE.near));
+scene.add(hills);
+
+// ---------- Солнце у горизонта ----------
+// Яркий красный диск касается линии холмов; ореол складывается с небом (additive).
+const SUN_DIST = 1300, SUN_R = 110;   // большой диск ~10°
+const sunDiscTex = pixelTexture(48, 48, (g, w, h) => {
+  const c = (w - 1) / 2, r = w / 2 - 0.5;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const d = Math.hypot(x - c, y - c) / r;
+    if (d > 1) continue;
+    g.fillStyle = '#ff2a14';                          // один яркий красный
+    g.fillRect(x, y, 1, 1);
+  }
+});
+const sunHaloTex = pixelTexture(64, 64, (g, w, h) => {
+  const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+  gr.addColorStop(0, 'rgba(255,150,80,0.9)'); gr.addColorStop(0.3, 'rgba(255,90,40,0.35)');
+  gr.addColorStop(1, 'rgba(255,60,20,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+});
+// режим Y: белый диск со светлым ореолом (как каркас автобуса)
+const sunDiscXrTex = pixelTexture(48, 48, (g, w, h) => {
+  const c = (w - 1) / 2, r = w / 2 - 0.5;
+  g.fillStyle = '#ffffff';
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (Math.hypot(x - c, y - c) <= r) g.fillRect(x, y, 1, 1);
+});
+const sunHaloXrTex = pixelTexture(64, 64, (g, w, h) => {
+  const gr = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+  gr.addColorStop(0, 'rgba(255,255,255,0.95)'); gr.addColorStop(0.3, 'rgba(210,225,255,0.45)');
+  gr.addColorStop(1, 'rgba(160,190,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, w, h);
+});
+const sunGroup = new THREE.Group();
+const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunDiscTex, fog: false, depthWrite: false }));
+sunDisc.scale.set(SUN_R * 2, SUN_R * 2, 1);
+const HALO_FLAGS = { fog: false, depthWrite: false, blending: THREE.AdditiveBlending, transparent: true };
+const sunHalo = new THREE.Sprite(new THREE.SpriteMaterial({ map: sunHaloTex, ...HALO_FLAGS }));
+sunHalo.scale.set(SUN_R * 6, SUN_R * 6, 1);
+sunDisc.userData.xr = new THREE.SpriteMaterial({ map: sunDiscXrTex, fog: false, depthWrite: false });
+sunHalo.userData.xr = new THREE.SpriteMaterial({ map: sunHaloXrTex, ...HALO_FLAGS });
+sunDisc.renderOrder = 1;                         // диск поверх ореола — ровный цвет
+sunGroup.add(sunHalo, sunDisc);
+scene.add(sunGroup);
+
+// высота линии холмов в сторону солнца (угол над горизонтом от камеры)
+const SUN_AZ = Math.atan2(SUN_DIR.z, SUN_DIR.x);
+function placeSun(cam) {
+  let horizon = 0;
+  for (const [r, h, , , seed] of HILLS) horizon = Math.max(horizon, (hillHeight(SUN_AZ, h, seed) - cam.y) / r);
+  const cy = cam.y + horizon * SUN_DIST + SUN_R * 0.7;   // нижний край заходит за холмы — садится
+  sunGroup.position.set(cam.x + SUN_DIR.x * SUN_DIST, cy, cam.z + SUN_DIR.z * SUN_DIST);
+}
+
+// ---------- Трасса: стадион, длинные прямые перегоны с редкими плавными изгибами ----------
+const STRAIGHT = 3500, TURN_R = 840;
+// изгибы на каждой прямой: [начало (доля прямой), длина (м), увод вбок (м)]
+const BENDS = [[0.1, 300, 10], [0.3, 250, -8], [0.62, 350, 12], [0.85, 250, -9]];
+function stadiumAt(s) {
+  const h = STRAIGHT / 2, R = TURN_R, arc = Math.PI * R;
+  const L = 2 * STRAIGHT + 2 * arc;
+  s = ((s % L) + L) % L;
+  let x, z, nx, nz;
+  if (s < h) { x = R; z = -s; nx = 1; nz = 0; }
+  else if ((s -= h) < arc) { const a = s / R; x = R * Math.cos(a); z = -h - R * Math.sin(a); nx = Math.cos(a); nz = -Math.sin(a); }
+  else if ((s -= arc) < STRAIGHT) { x = -R; z = -h + s; nx = -1; nz = 0; }
+  else if ((s -= STRAIGHT) < arc) { const a = Math.PI + s / R; x = R * Math.cos(a); z = h - R * Math.sin(a); nx = Math.cos(a); nz = -Math.sin(a); }
+  else { s -= arc; x = R; z = h - s; nx = 1; nz = 0; }
+  return { x, z, nx, nz, L };
+}
+// плавные изгибы-"горбы" на прямых (на второй прямой — зеркально), остальное — прямо
+function bendOffset(s, L) {
+  const starts = [-STRAIGHT / 2, STRAIGHT / 2 + Math.PI * TURN_R];   // начала прямых по s
+  for (let k = 0; k < starts.length; k++) {
+    const m = (((s - starts[k]) % L) + L) % L;       // метры от начала прямой
+    if (m >= STRAIGHT) continue;
+    let off = 0;
+    for (const [at, len, a] of BENDS) {
+      const w = (m - at * STRAIGHT) / len;
+      if (w > 0 && w < 1) off += (k ? -a : a) * (1 - Math.cos(2 * Math.PI * w)) / 2;
+    }
+    return off;
+  }
+  return 0;
+}
+function trackPoints() {
+  const L = stadiumAt(0).L, pts = [];
+  for (let s = 0; s < L; s += 8) {
+    const p = stadiumAt(s), off = bendOffset(s, L);
+    pts.push(new THREE.Vector3(p.x + p.nx * off, 0, p.z + p.nz * off));
+  }
+  return pts;
+}
+const curve = new THREE.CatmullRomCurve3(trackPoints(), true, 'centripetal');
+const TRACK_LEN = curve.getLength();
+const SEG = 3000;
+
+// кадры вдоль трассы: точка + единичный вектор "вправо"
+const frames = [];
+for (let i = 0; i <= SEG; i++) {
+  const t = i / SEG, p = curve.getPointAt(t), tan = curve.getTangentAt(t);
+  frames.push({ p, side: new THREE.Vector3(-tan.z, 0, tan.x).normalize(), dist: t * TRACK_LEN });
+}
+
+// горизонтальная лента между смещениями offL..offR
+function ribbon(offL, offR, y, material, vLen) {
+  const pos = [], uv = [], idx = [];
+  frames.forEach(({ p, side, dist }, i) => {
+    pos.push(p.x + side.x * offL, y, p.z + side.z * offL, p.x + side.x * offR, y, p.z + side.z * offR);
+    uv.push(0, dist / vLen, 1, dist / vLen);
+    if (i < SEG) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  });
+  return meshFrom(pos, uv, idx, material);
+}
+// вертикальная лента (отбойник) на смещении off
+function wall(off, y0, y1, material) {
+  const pos = [], uv = [], idx = [];
+  frames.forEach(({ p, side, dist }, i) => {
+    const x = p.x + side.x * off, z = p.z + side.z * off;
+    pos.push(x, y0, z, x, y1, z);
+    uv.push(dist / 4, 0, dist / 4, 1);
+    if (i < SEG) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+  });
+  return meshFrom(pos, uv, idx, material);
+}
+function meshFrom(pos, uv, idx, material) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, material);
+}
+// столбики вдоль трассы с шагом step
+function posts(off, step, geo, color, y) {
+  const count = Math.floor(TRACK_LEN / step);
+  const mesh = new THREE.InstancedMesh(geo, lambert({ color }), count);
+  const d = new THREE.Object3D();
+  for (let i = 0; i < count; i++) {
+    const t = i / count, p = curve.getPointAt(t), tan = curve.getTangentAt(t);
+    d.position.set(p.x - tan.z * off, y, p.z + tan.x * off);
+    d.rotation.y = Math.atan2(tan.x, tan.z);
+    d.updateMatrix();
+    mesh.setMatrixAt(i, d.matrix);
+  }
+  return mesh;
+}
+
+// асфальт: белые края, белая прерывистая по центру
+const roadTex = pixelTexture(64, 32, (g, w, h) => {
+  g.fillStyle = '#6a6c6e'; g.fillRect(0, 0, w, h);
+  speckle(g, w, h, ['#5f6163', '#727476', '#646668'], 240);
+  g.fillStyle = '#e6e6e2';
+  g.fillRect(2, 0, 1, h); g.fillRect(w - 3, 0, 1, h);   // сплошные края
+  g.fillRect(31, 0, 1, 8);                              // короткий штрих по центру
+});
+const gravelTex = pixelTexture(16, 16, (g, w, h) => {
+  g.fillStyle = '#b3a891'; g.fillRect(0, 0, w, h);
+  speckle(g, w, h, ['#9f9580', '#c2b8a2', '#8e8574'], 60);
+});
+const railTex = pixelTexture(8, 4, (g, w, h) => {
+  g.fillStyle = '#c3c8cd'; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#e4e8ec'; g.fillRect(0, 1, w, 1);
+  g.fillStyle = '#8f959b'; g.fillRect(0, 3, w, 1);
+});
+
+const halfR = ROAD_WIDTH / 2, halfS = halfR + SHOULDER;
+scene.add(tagFill(ribbon(-halfS, halfS, 0.02, lambert({ map: gravelTex, side: THREE.DoubleSide }), 4), XR_BLUE.shoulder));
+scene.add(tagFill(ribbon(-halfR, halfR, 0.04, lambert({ map: roadTex, side: THREE.DoubleSide }), 12), XR_BLUE.road));
+
+const railMat = lambert({ map: railTex, side: THREE.DoubleSide });
+const postGeo = new THREE.BoxGeometry(0.15, 0.8, 0.15);
+for (const s of [-1, 1]) {
+  const off = s * (halfS - 0.4);
+  scene.add(wall(off, 0.5, 0.85, railMat));
+  scene.add(posts(off + s * 0.1, 4, postGeo, 0x8d9297, 0.4));
+  scene.add(posts(s * (halfS + 14), 7, new THREE.BoxGeometry(0.1, 1.3, 0.1), 0xd4d2c8, 0.65)); // забор
+}
+
+// ---------- ЛЭП ----------
+// Решётчатая опора в локальных координатах: X — поперёк линии (траверса), Z — вдоль линии.
+// Опора собирается из балок; все балки всех опор — один InstancedMesh (один draw call).
+const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+// Пропорции опоры (в условных единицах до масштаба TOWER_SCALE_Y): длинная сужающаяся пирамида
+// до "талии", сверху — расширяющийся "бокал" до траверсы и рожки грозотроса.
+// Соотношение частей по высоте: пирамида : бокал : рожки = 65 : 32 : 13.
+const TW_PARTS = [65, 32, 13];
+const TW_SUM = TW_PARTS[0] + TW_PARTS[1] + TW_PARTS[2];
+const TW_TOP = 31;                                     // верх рожков (вся высота)
+const TW_WAIST = TW_TOP * TW_PARTS[0] / TW_SUM;        // талия
+const TW_ARM = TW_TOP * (TW_PARTS[0] + TW_PARTS[1]) / TW_SUM;   // траверса
+const TW_INS = 2.5 * (TW_TOP - TW_WAIST) / 15;               // длина гирлянды изоляторов
+function towerBeams() {
+  const beams = [];                                   // [a, b, толщина]
+  const add = (a, b, t = 0.2) => beams.push([a, b, t]);
+  // нижняя пирамида: 4 ноги от базы (±4) к талии (±1.5), 6 ярусов связей
+  const LV = 6, half = y => 4 - (2.5 * y) / TW_WAIST;
+  const lv = Array.from({ length: LV + 1 }, (_, i) => (TW_WAIST * i) / LV);
+  const corners = y => { const s = half(y); return [V3(-s, y, -s), V3(s, y, -s), V3(s, y, s), V3(-s, y, s)]; };
+  for (let c = 0; c < 4; c++) add(corners(0)[c], corners(TW_WAIST)[c], 0.4);
+  for (let i = 0; i < lv.length - 1; i++) {
+    const A = corners(lv[i]), B = corners(lv[i + 1]);
+    for (let c = 0; c < 4; c++) {
+      const n = (c + 1) % 4;
+      add(A[c], A[n]);                                 // пояс
+      add(A[c], B[n]); add(A[n], B[c]);                // крест
+    }
+  }
+  // V-образный "бокал": от талии расходится к траверсе
+  const W = TW_WAIST, A2 = TW_ARM, MID = (W + A2) / 2;
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) add(V3(sx * 1.5, W, sz * 1.5), V3(sx * 6, A2, sz * 1.2), 0.3);
+    add(V3(sx * 1.5, W, -1.5), V3(sx * 6, A2, 1.2)); add(V3(sx * 1.5, W, 1.5), V3(sx * 6, A2, -1.2));
+    add(V3(sx * 3.75, MID, -1.35), V3(sx * 3.75, MID, 1.35));
+    // рожки для грозотроса
+    add(V3(sx * 6, A2, 0), V3(sx * 8, TW_TOP, 0), 0.25);
+    add(V3(sx * 10, A2, 0), V3(sx * 8, TW_TOP, 0), 0.15);
+    // гирлянды изоляторов
+    add(V3(sx * 9, A2, 0), V3(sx * 9, A2 - TW_INS, 0), 0.15);
+  }
+  add(V3(0, A2, 0), V3(0, A2 - TW_INS, 0), 0.15);
+  // траверса: две продольные балки + решётка
+  for (const sz of [-1.2, 1.2]) add(V3(-11, A2, sz), V3(11, A2, sz), 0.35);
+  for (let x = -11; x < 11; x += 2) add(V3(x, A2, -1.2), V3(x + 2, A2, 1.2), 0.12);
+  return beams;
+}
+// точки подвеса: 3 фазы + 2 грозотроса
+const WIRE_POINTS = [V3(-9, TW_ARM - TW_INS, 0), V3(0, TW_ARM - TW_INS, 0), V3(9, TW_ARM - TW_INS, 0),
+                     V3(-8, TW_TOP, 0), V3(8, TW_TOP, 0)];
+
+// линия идёт вдоль дороги по внешней стороне кольца
+const TOWER_SCALE_Y = 1.82;              // опоры выше в 1.82 раза (1.4 × 1.3; провода подвешены к ним же)
+const LINE_OFFSET = 34;                                // от оси дороги (м), + = справа по ходу
+const TOWER_STEP = 85;                                 // шаг опор вдоль трассы (м)
+
+const POWER_TOWERS = [];                 // матрицы опор (для жил)
+let pulseWires = null;                   // провода с импульсами тока (режим Y)
+function buildPowerLines() {
+  const beams = towerBeams();
+  const list = [], count = Math.round(TRACK_LEN / TOWER_STEP);
+  for (let k = 0; k < count; k++) {
+    const t = k / count, p = curve.getPointAt(t), tan = curve.getTangentAt(t);
+    const q = new THREE.Quaternion().setFromAxisAngle(V3(0, 1, 0), Math.atan2(tan.x, tan.z));
+    list.push(new THREE.Matrix4().compose(V3(p.x - tan.z * LINE_OFFSET, 0, p.z + tan.x * LINE_OFFSET), q, V3(1, TOWER_SCALE_Y, 1)));
+  }
+  list.push(list[0]);                                  // замыкаем провода по кругу
+  const towerMats = [list];
+
+  // опоры
+  const all = list.slice(0, -1);
+  POWER_TOWERS.push(...all);
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), lambert({ color: 0x1e161c }), all.length * beams.length);
+  const up = V3(0, 1, 0), m = new THREE.Matrix4();
+  let i = 0;
+  for (const T of all) for (const [a, b, t] of beams) {
+    const dir = b.clone().sub(a), l = dir.length();
+    m.compose(a.clone().add(b).multiplyScalar(0.5), new THREE.Quaternion().setFromUnitVectors(up, dir.normalize()), V3(t, l, t));
+    mesh.setMatrixAt(i++, m.premultiply(T));
+  }
+  scene.add(mesh);
+
+  // провода: парабола с провисом между соседними опорами
+  const SAG = 4, STEPS = 16, pts = [];
+  for (const list of towerMats) for (let k = 0; k < list.length - 1; k++) {
+    for (const wp of WIRE_POINTS) {
+      const A = wp.clone().applyMatrix4(list[k]), B = wp.clone().applyMatrix4(list[k + 1]);
+      for (let j = 0; j < STEPS; j++) {
+        for (const u of [j / STEPS, (j + 1) / STEPS]) {
+          const p = A.clone().lerp(B, u);
+          p.y -= SAG * 4 * u * (1 - u);
+          pts.push(p.x, p.y, p.z);
+        }
+      }
+    }
+  }
+  const wgeo = new THREE.BufferGeometry();
+  wgeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  const wires = new THREE.LineSegments(wgeo, new THREE.LineBasicMaterial({ color: 0x2a1a22 }));
+  scene.add(wires);
+
+  // импульсы тока: те же нити с путём вдоль каждой (aDist); рисуются только бегущие чёрточки
+  const dist = [];
+  for (let i = 0; i < pts.length; i += 6) {
+    const seg = i / 6;                                         // номер отрезка
+    const j = seg % STEPS;                                     // отрезок внутри пролёта
+    const w = Math.floor(seg / STEPS) % WIRE_POINTS.length;    // номер нити
+    const k = Math.floor(seg / STEPS / WIRE_POINTS.length);    // номер пролёта
+    const base = (k + j / STEPS) * TOWER_STEP + w * 37;        // сдвиг, чтобы нити мигали вразнобой
+    dist.push(base, base + TOWER_STEP / STEPS);
+  }
+  const pgeo = new THREE.BufferGeometry();
+  pgeo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  pgeo.setAttribute('aDist', new THREE.Float32BufferAttribute(dist, 1));
+  pulseWires = new THREE.LineSegments(pgeo, WIRE_PULSE_MAT);
+  pulseWires.visible = false;
+  pulseWires.layers.set(REVEAL_LAYER);
+  pulseWires.userData.xrSkip = true;
+  scene.add(pulseWires);
+}
+buildPowerLines();
+
+// ---------- Локаторы ----------
+// Изредка слева от дороги — огороженная территория: три параболические антенны на
+// пирамидальных опорах, дорожки, аппаратная, контейнеры, мачта связи, фонари, ворота и подъезд.
+// Координаты объекта: u — вдоль дороги, v — влево от оси дороги (метры).
+const RADAR_SITES = [0.08, 0.5];                     // где на трассе (доля круга) — на прямых, вне изгибов
+const SITE = { u0: -55, u1: 55, v0: 40, v1: 110, gate: 4 };
+const DISHES = [[-30, 62, 40, 35], [4, 90, 160, 55], [34, 60, 280, 25]];   // u, v, азимут°, угол места°
+
+function beam(a, b, t, mat) {            // балка-брусок между двумя точками
+  const dir = b.clone().sub(a), m = new THREE.Mesh(new THREE.BoxGeometry(t, dir.length(), t), mat);
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.quaternion.setFromUnitVectors(V3(0, 1, 0), dir.normalize());
+  return m;
+}
+function buildRadar(azDeg, elDeg) {
+  const R = 8, DEPTH = 2.5, F = R * R / (4 * DEPTH);   // радиус, глубина, фокус параболы
+  const white = lambert({ color: 0xe2e0d8, side: THREE.DoubleSide });
+  const grey = lambert({ color: 0x9a9a96 });
+  const g = new THREE.Group();
+  // основание, пирамидальная опора (усечённая, 4 грани), поворотная голова
+  g.add(box(7, 1, 7, 0x8a8680, 0, 0.5, 0));
+  const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.1 * Math.SQRT2, 2.6 * Math.SQRT2, 8, 4),
+    lambert({ color: 0xcac8c0 }));
+  ped.rotation.y = Math.PI / 4; ped.position.y = 5;
+  g.add(ped);
+  g.add(box(1, 1.8, 0.1, 0x5a5a58, 0, 1.9, 2.5));                      // дверца в опоре
+  g.add(box(3.2, 1.2, 3.2, 0xb0aea6, 0, 9.6, 0));
+  // тарелка: парабола вращения, ось исходно вверх; наклоняется на угол места
+  const dish = new THREE.Group();
+  const prof = [];
+  for (let i = 0; i <= 6; i++) { const r = (R * i) / 6; prof.push(new THREE.Vector2(r, (r * r) / (4 * F))); }
+  dish.add(new THREE.Mesh(new THREE.LatheGeometry(prof, 14), white));
+  // облучатель в фокусе на трёх растяжках
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI * 2;
+    dish.add(beam(V3(Math.cos(a) * R * 0.95, DEPTH * 0.9, Math.sin(a) * R * 0.95), V3(0, F, 0), 0.15, grey));
+  }
+  dish.add(box(0.8, 1.2, 0.8, 0x6a6a66, 0, F, 0));
+  dish.add(box(1.4, 1.4, 1.4, 0x8a8680, 0, -0.6, 0));                   // ступица
+  dish.position.y = 10.8;
+  dish.rotation.x = THREE.MathUtils.degToRad(90 - elDeg);                 // от вертикали к горизонту
+  const head = new THREE.Group();
+  head.add(dish);
+  head.rotation.y = THREE.MathUtils.degToRad(azDeg);
+  g.add(head);
+  return g;
+}
+
+function buildRadarSite() {
+  const g = new THREE.Group();
+  const at = (obj, u, y, v) => { obj.position.set(u, y, -v); g.add(obj); return obj; };
+  const lbox = (w, h, d, color, u, y, v) => at(box(w, h, d, color, 0, 0, 0), u, y, v);
+  // плоская полоса от (u1,v1) до (u2,v2) шириной wid — дорожки, провода забора
+  const strip = (u1, v1, u2, v2, wid, h, y, mat) => {
+    const du = u2 - u1, dz = -(v2 - v1), len = Math.hypot(du, dz);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(len, h, wid), mat);
+    m.rotation.y = Math.atan2(-dz, du);
+    return at(m, (u1 + u2) / 2, y, (v1 + v2) / 2);
+  };
+  const { u0, u1, v0, v1, gate } = SITE;
+
+  // площадка (гравий) и подъезд от трассы к воротам
+  const padTex = gravelTex.clone(); padTex.needsUpdate = true; padTex.repeat.set((u1 - u0) / 4, (v1 - v0) / 4);
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(u1 - u0, v1 - v0), lambert({ map: padTex }));
+  pad.rotation.x = -Math.PI / 2;
+  tagFill(at(pad, (u0 + u1) / 2, 0.015, (v0 + v1) / 2), XR_BLUE.shoulder);
+  tagFill(strip(0, halfS, 0, v0 + 2, 5, 0.04, 0.03, lambert({ color: 0x6a6c6e })), XR_BLUE.road);
+
+  // бетонные дорожки: ворота -> центр -> к каждой антенне и к аппаратной
+  const slab = lambert({ color: 0x9a9890 });
+  const hub = [0, 76];
+  tagFill(strip(0, v0, hub[0], hub[1], 3, 0.04, 0.035, slab), XR_BLUE.road);
+  for (const [u, v] of DISHES) tagFill(strip(hub[0], hub[1], u, v, 2.5, 0.04, 0.035, slab), XR_BLUE.road);
+  tagFill(strip(hub[0], hub[1], -26, 92, 2.5, 0.04, 0.035, slab), XR_BLUE.road);
+
+  // забор: столбики через 3 м + три нити сетки; разрыв под ворота
+  const postMat = lambert({ color: 0x9a9a96 }), wireMat = lambert({ color: 0xb8b8b4 });
+  const sides = [[u0, v0, -gate, v0], [gate, v0, u1, v0], [u1, v0, u1, v1], [u1, v1, u0, v1], [u0, v1, u0, v0]];
+  for (const [a1, b1, a2, b2] of sides) {
+    const len = Math.hypot(a2 - a1, b2 - b1), n = Math.max(1, Math.round(len / 3));
+    for (let i = 0; i <= n; i++) {
+      const k = i / n;
+      at(new THREE.Mesh(new THREE.BoxGeometry(0.1, 2.2, 0.1), postMat), a1 + (a2 - a1) * k, 1.1, b1 + (b2 - b1) * k);
+    }
+    for (const y of [0.6, 1.3, 2.0]) strip(a1, b1, a2, b2, 0.04, 0.04, y, wireMat);
+  }
+  for (const s of [-1, 1]) {
+    lbox(0.3, 2.6, 0.3, 0x7a7a76, s * gate, 1.3, v0);                    // столбы ворот
+    strip(s * gate, v0, s * (gate - 1.5), v0 + 3.5, 0.06, 1.8, 1.1, wireMat);   // распахнутые створки
+  }
+
+  // аппаратная: здание с окнами, дверью, парапетом и кондиционером
+  lbox(14, 4, 8, 0xdcd8cc, -32, 2, 97);
+  lbox(14.2, 0.3, 8.2, 0xc8c4b8, -32, 4.15, 97);
+  lbox(10, 0.9, 0.1, 0x3e4858, -33, 2.6, 92.95);
+  lbox(1.2, 2.2, 0.1, 0x4a4a48, -26, 1.1, 92.95);
+  lbox(2, 1, 1.5, 0x9a9a96, -36, 4.8, 98);
+  // контейнеры
+  lbox(6.1, 2.6, 2.44, 0x5a7a5a, 16, 1.3, 101);
+  lbox(6.1, 2.6, 2.44, 0x8a8a84, 24, 1.3, 101);
+  // решётчатая мачта связи
+  const mastMat = lambert({ color: 0x8e9296 });
+  const mu = 46, mv = 98, top = 22;
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) g.add(beam(V3(mu + x * 1.5, 0, -mv + z * 1.5), V3(mu + x * 0.3, top, -mv + z * 0.3), 0.15, mastMat));
+  for (let y = 4; y < top; y += 4) {
+    const w = 1.5 - 1.2 * (y / top);
+    lbox(w * 2, 0.1, 0.1, 0x8e9296, mu, y, mv + w); lbox(w * 2, 0.1, 0.1, 0x8e9296, mu, y, mv - w);
+    lbox(0.1, 0.1, w * 2, 0x8e9296, mu + w, y, mv); lbox(0.1, 0.1, w * 2, 0x8e9296, mu - w, y, mv);
+  }
+  lbox(0.2, 3, 0.2, 0x8e9296, mu, top + 1.5, mv);
+  lbox(0.6, 1.2, 0.2, 0xcac8c0, mu + 0.5, top - 1, mv);                  // панельные антенны
+  lbox(0.2, 1.2, 0.6, 0xcac8c0, mu, top - 1, mv - 0.5);
+  // фонари
+  for (const [u, v] of [[-12, 70], [20, 82], [-2, 45]]) {
+    lbox(0.15, 8, 0.15, 0x8a8a84, u, 4, v);
+    lbox(0.9, 0.2, 0.4, 0xd8d6cc, u + 0.4, 8, v);
+  }
+  // антенны
+  for (const [u, v, az, el] of DISHES) at(buildRadar(az, el), u, 0, v);
+  return g;
+}
+for (const site of RADAR_SITES) {
+  const p = curve.getPointAt(site), tan = curve.getTangentAt(site);
+  const g = buildRadarSite();
+  g.position.set(p.x, 0, p.z);
+  g.rotation.y = Math.atan2(-tan.z, tan.x);           // локальный X — вдоль дороги, -Z — влево
+  scene.add(g);
+}
+
+// ---------- Саунд-система (стоит в ангаре аэродрома) ----------
+const SOUND_SCALE = 1.584, PLINTH_H = 0.4;          // вся система крупнее исходной в 1.2 × 1.2 × 1.1; высота постамента
+let soundSpeakers = null;                            // колонки (без постамента) — подпрыгивают под бочку, как автобус
+let soundRoot = null;                                // вся саунд-система — в U обрабатывается как нереальное (как автобус)
+const blinders = [];                                 // лампы блайндеров (для экранного слепящего сияния)
+const blinderGlowTex = pixelTexture(32, 32, (g) => {
+  const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, 'rgba(255,236,190,0.94)'); gr.addColorStop(0.37, 'rgba(255,196,120,0.45)'); gr.addColorStop(1, 'rgba(255,150,70,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+});
+const WOOD = '#ad8d60', WOOD_LIGHT = '#cab38c', WOOD_DARK = '#573e2a', CONE = '#17110b', CONE_RING = '#3a3026';
+function speakerFace(w, h, draw) {
+  return pixelTexture(w, h, (g) => {
+    g.fillStyle = WOOD; g.fillRect(0, 0, w, h);
+    g.fillStyle = WOOD_LIGHT; g.fillRect(0, 0, w, 1); g.fillRect(0, 0, 1, h);
+    g.fillStyle = WOOD_DARK; g.fillRect(0, h - 1, w, 1); g.fillRect(w - 1, 0, 1, h);
+    draw(g);
+  });
+}
+function speakerCone(g, cx, cy, r) {                          // динамик: тёмный круг, кольцо подвеса, колпачок
+  for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) {
+    const d = Math.hypot(x, y);
+    if (d > r) continue;
+    g.fillStyle = d > r - 1.2 ? CONE_RING : d < r * 0.28 ? '#0b0805' : CONE;
+    g.fillRect(cx + x, cy + y, 1, 1);
+  }
+}
+const FACE_MIDBASS = speakerFace(26, 18, g => { g.fillStyle = '#1a140e'; g.fillRect(2, 2, 22, 14); speakerCone(g, 13, 9, 7); });   // мидбас: один крупный динамик
+const FACE_MID = speakerFace(26, 18, g => { g.fillStyle = '#1a140e'; g.fillRect(2, 2, 22, 14); speakerCone(g, 7, 9, 5); speakerCone(g, 19, 9, 5); });
+const FACE_HORN = speakerFace(26, 12, g => {
+  g.fillStyle = '#1a140e';
+  for (let y = 2; y < 10; y++) { const half = 4 + (y - 2); g.fillRect(13 - half, y, half * 2, 1); }   // рупор
+  g.fillStyle = '#0b0805'; g.fillRect(11, 4, 4, 3);
+  speakerCone(g, 3, 6, 2); speakerCone(g, 22, 6, 2);                 // твитеры
+});
+function speakerBox(face, w, h, d) {
+  const wood = lambert({ color: WOOD }), side = lambert({ color: WOOD_DARK });
+  // грани BoxGeometry: +x, -x, +y, -y, +z (лицо), -z
+  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), [side, side, wood, side, lambert({ map: face }), side]);
+}
+// басовый рупор ("совок"): открытая горловина в раме, изогнутая дека от нижнего переднего края к задней стенке,
+// наверху — тёмное горло с динамиком
+function scoopBin(W, H, D) {
+  const g = new THREE.Group(), T = 0.05;
+  const wood = lambert({ color: WOOD }), dark = lambert({ color: WOOD_DARK }), inner = lambert({ color: '#2b2016' });
+  const plank = (w, h, d, mat, x, y, z, rx = 0) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z); m.rotation.x = rx; g.add(m);
+  };
+  for (const sx of [-1, 1]) plank(T, H, D, dark, sx * (W - T) / 2, H / 2, 0);   // боковины
+  plank(W, T, D, wood, 0, H - T / 2, 0);                                        // крыша
+  plank(W, T, D, dark, 0, T / 2, 0);                                            // дно
+  plank(W - 2 * T, H, T, inner, 0, H / 2, -D / 2 + T / 2);                      // задняя стенка
+  const R = Math.min(D, H) * 0.85, cz = -D / 2 + R, cy = T;                     // дека: 6 досок по дуге
+  for (let i = 0; i < 6; i++) {
+    const a0 = (i / 6) * Math.PI / 2, a1 = ((i + 1) / 6) * Math.PI / 2, am = (a0 + a1) / 2;
+    const len = 2 * R * Math.sin((a1 - a0) / 2) + 0.02;
+    plank(W - 2 * T, T, len, i % 2 ? wood : lambert({ color: WOOD_LIGHT }),
+      0, cy + R - R * Math.cos(am), cz - R * Math.sin(am), am);   // доска по касательной к дуге
+  }
+  plank(W - 2 * T, H - R - 2 * T, 0.08, inner, 0, R + T + (H - R - 2 * T) / 2, -D / 2 + 0.15);   // горло
+  const c = new THREE.Mesh(new THREE.CircleGeometry(Math.min(0.3, (H - R) * 0.4), 12), lambert({ color: CONE }));
+  c.position.set(0, R + T + (H - R - 2 * T) / 2, -D / 2 + 0.2); g.add(c);
+  return g;
+}
+function buildSoundSystem() {
+  const g = new THREE.Group(), W = 1.3, GAP = 1.32;
+  const put = (m, x, y, z = 0) => { m.position.set(x, y, z); g.add(m); };
+  for (let i = 0; i < 6; i++) {
+    const x = (i - 2.5) * GAP;
+    put(scoopBin(W, 1.3, 1.0), x, 0);                           // басовые рупоры
+    put(speakerBox(FACE_MIDBASS, W, 0.9, 1.0), x, 1.75);        // мидбас над сабом
+    put(speakerBox(FACE_MID, W, 0.9, 0.9), x, 2.65, -0.05);     // средние
+  }
+  for (let i = 0; i < 4; i++) put(speakerBox(FACE_HORN, W, 0.6, 0.8), (i - 1.5) * GAP, 3.4, -0.1);   // рупоры
+  for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) {       // по две боковые башни с каждой стороны, полукругом
+    const tw = new THREE.Group();
+    const add = (m, y) => { m.position.y = y; tw.add(m); };
+    add(scoopBin(W, 1.3, 1.0), 0);
+    add(speakerBox(FACE_MIDBASS, W, 0.9, 1.0), 1.75);           // мидбас над сабом
+    add(speakerBox(FACE_MID, W, 0.9, 0.9), 2.65);
+    add(speakerBox(FACE_MID, W, 0.9, 0.9), 3.55);
+    add(speakerBox(FACE_HORN, W, 0.6, 0.8), 4.3);
+    tw.position.set(sx * (5.4 + k * 1.45), 0, 0.6 + k * 0.75);
+    tw.rotation.y = -sx * (0.35 + k * 0.22);
+    g.add(tw);
+  }
+  const root = new THREE.Group();                               // постамент, система на нём
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(17.6, PLINTH_H, 3.8), lambert({ color: 0x6f6a60 }));
+  plinth.position.set(0, PLINTH_H / 2, 0.4);
+  root.add(plinth);
+  const lip = new THREE.Mesh(new THREE.BoxGeometry(17.8, 0.06, 4.0), lambert({ color: 0x57524a }));
+  lip.position.set(0, PLINTH_H, 0.4);
+  root.add(lip);
+  g.position.y = PLINTH_H;
+  root.add(g);
+  root.scale.setScalar(SOUND_SCALE);
+  root.userData.speakers = g;
+  return root;
+}
+
+// ---------- Аэродром ----------
+// Внутри кольца трассы, съезд — через 500 м после первой станции локаторов (система координат как у
+// станции: u — вдоль дороги, v — от дороги внутрь кольца). К воротам ведёт гравийка прямо от трассы.
+// Полоса, рулёжка, перрон (без самолётов), вышка с маяком и анемометром, ветроуказатели, обзорный
+// радар, ангар, топливо, прожекторы, вертолётная площадка, пожарная машина, забор с КПП.
+// привязка: съезд с трассы (локально u = -100) — через AIRPORT_EXIT_AFTER м после первой станции локаторов
+const AIRPORT_EXIT_AFTER = 500;
+const AIRPORT_S = RADAR_SITES[0] * TRACK_LEN + AIRPORT_EXIT_AFTER + 100;   // м по трассе до начала координат аэродрома
+const AF = { u0: -380, u1: 580, v0: 150, v1: 400, gate: -40 };   // периметр аэродрома
+const RWY = { u0: -340, u1: 540, v: 300, w: 20 };    // взлётная полоса (880 м)
+const airportAnim = [];                              // (t) => {} — вращение/колыхание
+const HANGAR = { u: 100, v: 186, R: 16.5, HL: 45, doorW: 20, doorH: 12 };   // ангар (в 1.5 раза больше исходного)
+const hangarBlockers = [];                           // стены ангара — закрывают солнце для бликов
+function stripeTex(w, h, colors, vertical) {        // полосатая пиксельная текстура
+  return pixelTexture(w, h, (g) => {
+    const n = colors.length;
+    for (let i = 0; i < (vertical ? w : h); i++) {
+      g.fillStyle = colors[Math.floor(i / ((vertical ? w : h) / n)) % n];
+      if (vertical) g.fillRect(i, 0, 1, h); else g.fillRect(0, i, w, 1);
+    }
+  });
+}
+const DIGITS = {                                      // пиксельный шрифт 3×5
+  '0': ['111', '101', '101', '101', '111'], '2': ['111', '001', '111', '100', '111'],
+  '7': ['111', '001', '010', '010', '010'], '9': ['111', '101', '111', '001', '111'],
+};
+function numberTex(str) {
+  return pixelTexture(4 * str.length + 1, 7, (g) => {
+    g.clearRect(0, 0, 99, 99);
+    [...str].forEach((ch, i) => DIGITS[ch].forEach((row, y) => [...row].forEach((b, x) => {
+      if (b === '1') { g.fillStyle = '#f2f2ee'; g.fillRect(1 + i * 4 + x, 1 + y, 1, 1); }
+    })));
+  });
+}
+// Ан-2 "кукурузник": биплан, звездообразный мотор с 4-лопастным винтом (крутится на холостых),
+// сужающийся хвост, киль, хвостовое колесо — стоит с задранным носом. Нос по +X.
+function buildAn2() {
+  const MINT = 0xa8f0cf, MINT_DARK = 0x7fd4b0, WHITE_ = 0xf2f2ee, COWL = 0x2f3333, GLASS_ = 0x2c3a4c;
+  const plane = new THREE.Group();
+  const add = (m, x, y, z) => { m.position.set(x, y, z); plane.add(m); return m; };
+  const bx = (w, h, d, c, x, y, z) => add(new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert({ color: c })), x, y, z);
+  // фюзеляж: кабина-коробка + сужающийся к хвосту конус (4 грани)
+  bx(6.6, 1.9, 1.7, MINT, 2.3, 2.0, 0);
+  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 1.2, 5.8, 4), lambert({ color: MINT }));
+  tail.geometry.rotateY(Math.PI / 4); tail.geometry.rotateZ(Math.PI / 2);     // узкий конец — к хвосту (-X)
+  add(tail, -3.9, 2.15, 0);
+  for (const sz of [-1, 1]) {
+    bx(9.5, 0.12, 0.02, WHITE_, 0.5, 1.75, sz * 0.86);                          // белая полоса по борту
+    for (let i = 0; i < 5; i++) bx(0.35, 0.35, 0.02, GLASS_, -0.4 + i * 0.8, 2.3, sz * 0.86);   // иллюминаторы
+    bx(0.9, 0.6, 0.02, GLASS_, 4.9, 2.55, sz * 0.86);                           // боковые стёкла кабины
+  }
+  bx(0.6, 0.55, 1.4, GLASS_, 5.35, 2.72, 0);                                    // лобовое стекло
+  // нос: капот мотора + кок + винт
+  const cowl = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.9, 1.2, 12), lambert({ color: COWL }));
+  cowl.geometry.rotateZ(Math.PI / 2); add(cowl, 6.2, 2.0, 0);
+  const spinner = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 8), lambert({ color: 0xd8d8d4 }));
+  spinner.geometry.rotateZ(-Math.PI / 2); add(spinner, 7.05, 2.0, 0);
+  const prop = new THREE.Group();
+  for (let i = 0; i < 4; i++) {
+    const blade = new THREE.Group();
+    blade.add(box(0.08, 1.55, 0.22, 0x202020, 0, 0.85, 0), box(0.09, 0.25, 0.23, 0xe8c23a, 0, 1.55, 0));   // жёлтые законцовки
+    blade.rotation.x = i * Math.PI / 2;
+    prop.add(blade);
+  }
+  add(prop, 6.9, 2.0, 0);
+  airportAnim.push(t => { prop.rotation.x = t * 5; });                          // холостой ход
+  // крылья: верхнее 18 м, нижнее 14 м; стойки и подкосы
+  bx(2.4, 0.25, 18.2, MINT, 3.2, 3.45, 0);
+  bx(2.1, 0.22, 14.2, MINT, 3.0, 1.15, 0);
+  for (const sz of [-1, 1]) {
+    bx(0.4, 0.26, 2.2, MINT_DARK, 2.05, 3.45, sz * 6.8);                        // элероны
+    for (const zz of [4.2, 6.6]) bx(0.12, 2.2, 0.3, WHITE_, 3.2, 2.3, sz * zz);   // межкрыльевые стойки
+    bx(0.1, 1.3, 0.1, WHITE_, 3.2, 3.0, sz * 0.7);                              // подкосы у фюзеляжа
+  }
+  // хвост: стабилизатор, киль с рулём
+  bx(1.6, 0.15, 7.2, MINT, -6.3, 2.35, 0);
+  bx(0.5, 0.16, 7.0, MINT_DARK, -7.25, 2.35, 0);                                // рули высоты
+  bx(2.2, 2.6, 0.15, MINT, -6.4, 3.6, 0);
+  bx(0.6, 2.4, 0.16, MINT_DARK, -7.6, 3.5, 0);                                  // руль направления
+  // шасси: основные стойки с колёсами, хвостовое колесо
+  const wheel = (r, x, y, z) => {
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(r, r, 0.3, 10), lambert({ color: 0x151515 }));
+    w.geometry.rotateX(Math.PI / 2); return add(w, x, y, z);
+  };
+  for (const sz of [-1, 1]) {
+    plane.add(beam(V3(3.0, 1.1, sz * 0.8), V3(3.4, 0.5, sz * 1.8), 0.14, lambert({ color: WHITE_ })));
+    plane.add(beam(V3(4.0, 1.1, sz * 0.8), V3(3.4, 0.5, sz * 1.8), 0.1, lambert({ color: WHITE_ })));
+    wheel(0.5, 3.4, 0.5, sz * 1.95);
+  }
+  // хвостовое колесо выше основных на (3.4 + 6.7)·tg(наклон) — после наклона на земле все три колеса
+  const PITCH = 0.1, tailLift = (3.4 + 6.7) * Math.tan(PITCH);
+  plane.add(beam(V3(-6.2, 1.85, 0), V3(-6.7, 0.25 + tailLift, 0), 0.1, lambert({ color: WHITE_ })));
+  wheel(0.2, -6.7, 0.2 + tailLift, 0);
+  // стоит на хвостовом колесе: нос задран; опускаем так, чтобы колёса касались земли
+  const g = new THREE.Group();
+  plane.rotation.z = PITCH;
+  g.add(plane);
+  plane.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(plane);
+  plane.position.y = -bb.min.y + 0.03;
+  return g;
+}
+function buildFireBus() {
+  const g = new THREE.Group();
+  const right = busSideTex(true, FIRE_PAL), left = busSideTex(false, FIRE_PAL);
+  left.repeat.x = -1; left.offset.x = 1;
+  const mats = [right, left, null, null, makeRearTex(FIRE_PAL), makeFrontTex(FIRE_PAL)]
+    .map((map, i) => lambert(map ? { map } : { color: i === 2 ? 0xc81e1e : 0x202022 }));
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(BUS_W, BUS_H, BUS_L), mats);
+  hull.position.y = BUS_Y0 + BUS_H / 2;
+  g.add(hull);
+  const top = BUS_Y0 + BUS_H;
+  g.add(box(BUS_W - 0.3, 0.12, BUS_L - 0.3, 0xb81a1a, 0, top + 0.06, 0));      // крыша
+  for (const sx of [-1, 1]) {
+    g.add(box(0.08, 0.5, 0.25, DARK, sx * 1.45, 2.3, -5.4));                    // зеркала
+    g.add(box(0.08, 0.08, 7, 0xd8d8d4, sx * 0.45, top + 0.35, 1));               // лестница: тетивы
+  }
+  for (let z = -2.4; z <= 4.4; z += 0.6) g.add(box(0.9, 0.06, 0.06, 0xd8d8d4, 0, top + 0.35, z));   // ступени
+  // мигалки: красная и синяя на передней части крыши, моргают поочерёдно
+  const red = new THREE.MeshBasicMaterial({ color: 0xff2a1a }), blue = new THREE.MeshBasicMaterial({ color: 0x2a6aff });
+  const lr = box(0.7, 0.25, 0.35, 0, -0.5, top + 0.25, -4.6), lb = box(0.7, 0.25, 0.35, 0, 0.5, top + 0.25, -4.6);
+  lr.material = red; lb.material = blue; g.add(lr, lb);
+  airportAnim.push(t => { const on = Math.floor(t * 4) % 2; lr.visible = !!on; lb.visible = !on; });
+  const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.32, 8);
+  wheelGeo.rotateZ(Math.PI / 2);
+  for (const z of [-3.3, 2.4]) for (const sx of [-1, 1]) {
+    const w = new THREE.Mesh(wheelGeo, lambert({ color: 0x141414 }));
+    w.position.set(sx * 1.05, 0.5, z); g.add(w);
+  }
+  return g;
+}
+function buildAirport() {
+  const g = new THREE.Group();
+  const at = (obj, u, y, v) => { obj.position.set(u, y, -v); g.add(obj); return obj; };
+  const lbox = (w, h, d, color, u, y, v) => at(box(w, h, d, color, 0, 0, 0), u, y, v);
+  const flat = (lenU, lenV, u, v, y, mat) => {        // плоскость на земле: lenU вдоль u, lenV вдоль v
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(lenU, lenV), mat);
+    m.rotation.x = -Math.PI / 2;
+    return at(m, u, y, v);
+  };
+  const strip = (u1, v1, u2, v2, wid, h, y, mat) => {
+    const du = u2 - u1, dz = -(v2 - v1), len = Math.hypot(du, dz);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(len, h, wid), mat);
+    m.rotation.y = Math.atan2(-dz, du);
+    return at(m, (u1 + u2) / 2, y, (v1 + v2) / 2);
+  };
+  const cyl = (rt, rb, h, seg, color, u, y, v) => at(new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), lambert({ color })), u, y, v);
+  const WHITE = lambert({ color: 0xf2f2ee }), YELLOW = lambert({ color: 0xe8c23a });
+  const ASPHALT = lambert({ color: 0x55585b }), CONCRETE = lambert({ color: 0x8a877f });
+
+  // ---- гравийные дороги к воротам аэродрома: от подъезда к станции локаторов и прямо от трассы
+  const gravelRoad = (pts) => {
+    const rc = new THREE.CatmullRomCurve3(pts.map(([u, v]) => new THREE.Vector3(u, 0, -v)), false, 'centripetal');
+    const N = 120, pos = [], uv = [], idx = [], W = 5, len = rc.getLength();
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, pp = rc.getPointAt(t), tg = rc.getTangentAt(t), nx = -tg.z, nz = tg.x;
+      pos.push(pp.x + nx * W / 2, 0.03, pp.z + nz * W / 2, pp.x - nx * W / 2, 0.03, pp.z - nz * W / 2);
+      uv.push(0, t * len / 4, 1.25, t * len / 4);
+      if (i < N) { const a = i * 2; idx.push(a, a + 2, a + 1, a + 1, a + 2, a + 3); }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx); geo.computeVertexNormals();
+    const tex = gravelTex.clone(); tex.needsUpdate = true;
+    const road = new THREE.Mesh(geo, lambert({ map: tex, side: THREE.DoubleSide }));
+    g.add(road); tagFill(road, XR_BLUE.shoulder);
+  };
+  gravelRoad([[-40, 152], [-40, 172]]);                                         // от ворот к перрону
+  gravelRoad([[-100, halfS - 0.5], [-101, 30], [-99, 80], [-88, 125], [-62, 146], [-40, 152]]);   // съезд прямо с трассы
+
+  // ---- знак "← AIRPORT" у съезда: белый щит на двух ножках, лицом к едущим по трассе
+  {
+    const GLYPH = {
+      A: ['010', '101', '111', '101', '101'], I: ['111', '010', '010', '010', '111'], R: ['110', '101', '110', '101', '101'],
+      P: ['110', '101', '110', '100', '100'], O: ['111', '101', '101', '101', '111'], T: ['111', '010', '010', '010', '010'],
+    };
+    const ARROW = ['00100', '01000', '11111', '01000', '00100'];
+    const signTex = pixelTexture(40, 11, (c) => {
+      c.fillStyle = '#f2f2ee'; c.fillRect(0, 0, 40, 11);
+      c.fillStyle = '#1a1a1a';
+      c.fillRect(0, 0, 40, 1); c.fillRect(0, 10, 40, 1); c.fillRect(0, 0, 1, 11); c.fillRect(39, 0, 1, 11);   // рамка
+      ARROW.forEach((row, y) => [...row].forEach((b, x) => { if (b === '1') c.fillRect(3 + x, 3 + y, 1, 1); }));
+      [...'AIRPORT'].forEach((ch, i) => GLYPH[ch].forEach((row, y) => [...row].forEach((b, x) => {
+        if (b === '1') c.fillRect(10 + i * 4 + x, 3 + y, 1, 1);
+      })));
+    });
+    const white = lambert({ color: 0xf2f2ee });
+    // грани: +x, -x (лицо — навстречу движению, т.е. к -u), +y, -y, +z, -z
+    const board = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.1, 4), [white, lambert({ map: signTex }), white, white, white, white]);
+    at(board, -112, 2.1, halfS + 4);
+    for (const dv of [-1.6, 1.6]) lbox(0.1, 2.1, 0.1, 0xd8d8d4, -111.95, 1.05, halfS + 4 + dv);   // две ножки
+  }
+
+  // ---- забор по периметру (столбики — один InstancedMesh) и КПП со шлагбаумом
+  const { u0, u1, v0, v1, gate } = AF;
+  const sides = [[u0, v0, gate - 6, v0], [gate + 6, v0, u1, v0], [u1, v0, u1, v1], [u1, v1, u0, v1], [u0, v1, u0, v0]];
+  const postPts = [];
+  const wireMat = lambert({ color: 0xb8b8b4 });
+  for (const [a1, b1, a2, b2] of sides) {
+    const n = Math.max(1, Math.round(Math.hypot(a2 - a1, b2 - b1) / 4));
+    for (let i = 0; i <= n; i++) postPts.push([a1 + (a2 - a1) * i / n, b1 + (b2 - b1) * i / n]);
+    for (const y of [0.7, 1.4, 2.1]) strip(a1, b1, a2, b2, 0.04, 0.04, y, wireMat);
+  }
+  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 2.4, 0.1), lambert({ color: 0x9a9a96 }), postPts.length);
+  const dm = new THREE.Object3D();
+  postPts.forEach(([u, v], i) => { dm.position.set(u, 1.2, -v); dm.updateMatrix(); posts.setMatrixAt(i, dm.matrix); });
+  g.add(posts);
+  for (const s of [-1, 1]) lbox(0.35, 2.8, 0.35, 0x7a7a76, gate + s * 6, 1.4, v0);
+  const barrier = new THREE.Mesh(new THREE.BoxGeometry(10, 0.12, 0.12), lambert({ map: stripeTex(10, 1, ['#d42020', '#f2f2ee'], true) }));
+  barrier.geometry.translate(5, 0, 0);
+  at(barrier, gate - 5.5, 1.1, v0 - 0.6).rotation.z = 0.9;                   // поднятый шлагбаум
+  lbox(0.4, 1.1, 0.4, 0x5a5a58, gate - 5.5, 0.55, v0 - 0.6);
+  lbox(2.2, 2.5, 2.2, 0xdcd8cc, gate - 9, 1.25, v0 - 3);                     // будка охраны
+  lbox(1.4, 0.7, 0.05, 0x3e4858, gate - 9, 1.7, v0 - 4.12);
+  lbox(2.5, 0.15, 2.5, 0xb9b4a8, gate - 9, 2.57, v0 - 3);
+
+  // ---- взлётная полоса: асфальт, разметка, огни, номера, щиты дистанции
+  const L = RWY.u1 - RWY.u0, uc = (RWY.u0 + RWY.u1) / 2, rv = RWY.v, hw = RWY.w / 2;
+  tagFill(flat(L, RWY.w, uc, rv, 0.03, ASPHALT), XR_BLUE.road);
+  for (const s of [-1, 1]) flat(L - 4, 0.5, uc, rv + s * (hw - 0.8), 0.04, WHITE);   // краевые линии
+  for (let u = RWY.u0 + 40; u < RWY.u1 - 40; u += 24) flat(12, 0.6, u + 6, rv, 0.04, WHITE);   // осевая
+  for (const [ue, dir] of [[RWY.u0, 1], [RWY.u1, -1]]) {
+    for (let i = 0; i < 8; i++) {                                              // "пианино" на пороге
+      const off = -hw + 1.6 + i * ((RWY.w - 3.2) / 7) + (i >= 4 ? 0.8 : -0.8) * 0;
+      if (Math.abs(off) < 1.5) continue;
+      flat(12, 1.1, ue + dir * 8, rv + off, 0.04, WHITE);
+    }
+    for (const s of [-1, 1]) flat(20, 2.6, ue + dir * 70, rv + s * 4.5, 0.04, WHITE);   // точка прицеливания
+    const num = new THREE.Mesh(new THREE.PlaneGeometry(10, 8), new THREE.MeshLambertMaterial({ map: numberTex(dir > 0 ? '09' : '27'), transparent: true }));
+    num.rotation.set(-Math.PI / 2, 0, dir > 0 ? -Math.PI / 2 : Math.PI / 2);   // читается со стороны захода
+    at(num, ue + dir * 26, 0.045, rv);
+    for (let i = -3; i <= 3; i++) {                                            // входные огни: зелёные / красные
+      lbox(0.3, 0.35, 0.3, 0, ue - dir * 1.5, 0.18, rv + i * 3).material = new THREE.MeshBasicMaterial({ color: dir > 0 ? 0x3cff6a : 0xff3a2a });
+    }
+  }
+  const edgeLight = new THREE.MeshBasicMaterial({ color: 0xfff2c0 });
+  for (let u = RWY.u0; u <= RWY.u1; u += 30) for (const s of [-1, 1]) lbox(0.25, 0.35, 0.25, 0, u, 0.18, rv + s * (hw + 1)).material = edgeLight;
+  for (let k = 1; k <= 7; k++) {                                               // щиты оставшейся дистанции
+    const b = lbox(1.6, 1.0, 0.25, 0x151515, RWY.u0 + k * 110, 0.8, rv - hw - 6);
+    lbox(0.9, 0.5, 0.26, 0xf2f2ee, RWY.u0 + k * 110, 0.8, rv - hw - 6);
+    b.userData.sign = true;
+  }
+
+  // ---- рулёжка и перрон (без самолётов)
+  tagFill(flat(10, rv - hw - 205, 0, (rv - hw + 205) / 2, 0.03, ASPHALT), XR_BLUE.road);
+  flat(0.3, rv - hw - 205, 0, (rv - hw + 205) / 2, 0.04, YELLOW);            // жёлтая осевая
+  lbox(1.8, 1.2, 0.3, 0xe8c23a, 7, 0.7, rv - hw - 8);                         // жёлтый указатель "A"
+  lbox(1.0, 0.6, 0.31, 0x151515, 7, 0.7, rv - hw - 8);
+  tagFill(flat(130, 42, -10, 186, 0.032, CONCRETE), XR_BLUE.road);
+  for (const u of [-55, -25, 5, 35]) {                                        // стоянки: жёлтые "Т" и точки швартовки
+    flat(0.35, 22, u, 188, 0.04, YELLOW);
+    flat(8, 0.35, u, 177.5, 0.04, YELLOW);
+    for (const s of [-1, 1]) lbox(0.3, 0.05, 0.3, 0x2a2a2a, u + s * 6, 0.05, 190);
+  }
+  for (let i = 0; i < 6; i++) {                                               // конусы вдоль кромки перрона
+    at(new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.55, 6), lambert({ color: 0xff6a1a })), -70 + i * 26, 0.3, 208);
+  }
+
+  // ---- диспетчерская вышка: здание, стеклянная кабина, крыша, мачта, маяк, анемометр
+  const tu = -95, tv = 180;
+  lbox(7, 8, 7, 0xdcd8cc, tu, 4, tv);
+  for (const y of [2.2, 5.4]) lbox(5, 1.1, 7.05, 0x3e4858, tu, y, tv);       // окна этажей
+  lbox(1.3, 2.3, 0.1, 0x4a4a48, tu + 2, 1.15, tv - 3.55);                     // дверь
+  lbox(8.2, 0.5, 8.2, 0xb9b4a8, tu, 8.25, tv);                                // балкон
+  lbox(7, 3, 7, 0x2c3a4c, tu, 10, tv);                                        // стеклянная кабина
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) lbox(0.25, 3, 0.25, 0xf2f2ee, tu + x * 3.45, 10, tv + z * 3.45);
+  lbox(7.2, 0.18, 7.2, 0xf2f2ee, tu, 8.7, tv);
+  lbox(8.4, 0.5, 8.4, 0xb9b4a8, tu, 11.75, tv);                               // крыша с навесом
+  lbox(0.15, 6, 0.15, 0x8e9296, tu + 2.5, 15, tv + 2.5);                      // мачта
+  const beacon = new THREE.Group();                                           // вращающийся маяк: зелёный/белый
+  beacon.add(box(0.5, 0.35, 0.18, 0, 0.3, 0, 0), box(0.5, 0.35, 0.18, 0, -0.3, 0, 0));
+  beacon.children[0].material = new THREE.MeshBasicMaterial({ color: 0x3cff6a });
+  beacon.children[1].material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  lbox(0.35, 0.4, 0.35, 0x5a5a58, tu + 2.5, 18.2, tv + 2.5);
+  at(beacon, tu + 2.5, 18.6, tv + 2.5);
+  airportAnim.push(t => { beacon.rotation.y = t * 3.2; });
+  lbox(0.1, 3, 0.1, 0x8e9296, tu - 2.5, 13.5, tv - 2.5);                      // анемометр: чашки крутятся
+  const cups = new THREE.Group();
+  for (let i = 0; i < 3; i++) {
+    const a = i * 2.094, arm = box(0.9, 0.04, 0.04, 0xcfcfcf, Math.cos(a) * 0.45, 0, -Math.sin(a) * 0.45);
+    arm.rotation.y = a; cups.add(arm);
+    cups.add(box(0.18, 0.18, 0.18, 0xe8c23a, Math.cos(a) * 0.9, 0, -Math.sin(a) * 0.9));
+  }
+  at(cups, tu - 2.5, 15.05, tv - 2.5);
+  airportAnim.push(t => { cups.rotation.y = t * 5.5; });
+  lbox(9, 3, 3.2, 0xe8e6de, tu + 28, 1.5, tv - 8);                            // бытовка рядом
+  lbox(8, 0.9, 3.25, 0x3e4858, tu + 28, 1.9, tv - 8);
+
+  // ---- обзорный радар на решётчатой мачте (вращается, в стиле станции локаторов)
+  const ru = -135, rv2 = 205;
+  for (const [x, z] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) g.add(beam(V3(ru + x * 1.6, 0, -rv2 + z * 1.6), V3(ru + x * 0.5, 10, -rv2 + z * 0.5), 0.14, lambert({ color: 0x8e9296 })));
+  lbox(1.4, 0.6, 1.4, 0xcac8c0, ru, 10.3, rv2);
+  const asr = new THREE.Group();
+  const dish = new THREE.Mesh(new THREE.BoxGeometry(5.5, 1.3, 0.25), lambert({ color: 0xe2e0d8 }));
+  dish.position.set(0, 0.9, 0.35); dish.rotation.x = -0.35; asr.add(dish);
+  asr.add(box(0.5, 0.5, 0.8, 0x8a8680, 0, 0.5, 0));
+  at(asr, ru, 10.6, rv2);
+  airportAnim.push(t => { asr.rotation.y = t * 1.1; });
+
+  // ---- большая тарелка на опоре, крутится по кругу
+  {
+    const dishSite = buildRadar(0, 30);
+    const head = dishSite.children.find(c => c.isGroup);
+    at(dishSite, -175, 0, 238);
+    airportAnim.push(t => { head.rotation.y = t * 0.45; });
+  }
+
+  // ---- ангар: арка, торцы, открытые ворота к перрону
+  const { u: hu, v: hv, R, HL, doorW, doorH } = HANGAR;
+  const corr = stripeTex(8, 1, ['#a7aaa9', '#9a9d9c', '#b2b5b4', '#9a9d9c'], true); corr.repeat.set(12, 1);
+  const arch = new THREE.Mesh(new THREE.CylinderGeometry(R, R, HL, 18, 1, true, 0, Math.PI), lambert({ map: corr, side: THREE.DoubleSide }));
+  arch.geometry.rotateZ(Math.PI / 2);                                         // ось вдоль u, арка вверх
+  at(arch, hu, 0, hv);
+  hangarBlockers.push(arch);
+  for (const s of [-1, 1]) {
+    // задний торец — сплошной полукруг; передний (к перрону) — с проёмом ворот doorW × doorH
+    const shape = new THREE.Shape();
+    if (s < 0) {
+      shape.moveTo(-R, 0); shape.lineTo(-doorW / 2, 0); shape.lineTo(-doorW / 2, doorH);
+      shape.lineTo(doorW / 2, doorH); shape.lineTo(doorW / 2, 0); shape.lineTo(R, 0);
+    } else { shape.moveTo(-R, 0); shape.lineTo(R, 0); }
+    shape.absarc(0, 0, R, 0, Math.PI, false);
+    const end = new THREE.Mesh(new THREE.ShapeGeometry(shape, 18), lambert({ color: 0x9a9d9c, side: THREE.DoubleSide }));
+    end.rotation.y = Math.PI / 2;
+    at(end, hu + s * HL / 2, 0, hv);
+    hangarBlockers.push(end);
+  }
+  // ворота открыты: внутри видно саунд-систему у задней стены, лицом к воротам (к перрону)
+  const inner = lambert({ color: 0x3a3a38, side: THREE.DoubleSide });
+  tagFill(flat(HL - 1, 2 * R - 1, hu, hv, 0.035, inner), XR_BLUE.road);      // пол ангара
+  const sound = buildSoundSystem();
+  soundSpeakers = sound.userData.speakers;
+  soundRoot = sound;
+  // блайндеры: 4 круглых прибора кучно, на кронштейнах к задней стене ангара под потолком; светят к воротам и вниз
+  {
+    const dark = lambert({ color: 0x151515 }), steel = lambert({ color: 0x4a4a48 });
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffd79a }), coreMat = new THREE.MeshBasicMaterial({ color: 0xfff2d8 });
+    const wallU = hu + HL / 2, BY = 12.5;
+    for (const dv of [-4.8, -1.6, 1.6, 4.8]) {                                // шаг 3.2 м
+      lbox(0.9, 0.15, 0.15, 0x4a4a48, wallU - 0.45, BY + 0.55, hv + dv);      // кронштейн от стены
+      const fx = new THREE.Group();
+      const hous = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 0.5, 18), dark);
+      hous.geometry.rotateX(Math.PI / 2); fx.add(hous);                        // круглый корпус, ось — вперёд (+Z)
+      const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 18), steel); ring.position.z = 0.26; fx.add(ring);
+      const lamp = new THREE.Mesh(new THREE.CircleGeometry(0.5, 18), lampMat); lamp.position.z = 0.255; fx.add(lamp);
+      const core = new THREE.Mesh(new THREE.CircleGeometry(0.22, 12), coreMat); core.position.z = 0.26; fx.add(core);
+      const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.55, 0.1), steel); yoke.position.y = 0.5; fx.add(yoke);
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: blinderGlowTex, blending: THREE.AdditiveBlending,
+        transparent: true, depthWrite: false, fog: false, color: 0xffc27a }));
+      glow.scale.set(2.5, 2.5, 1); glow.position.z = 0.48;                     // между компактным и прежним (40% назад)
+      glow.userData.xrHide = true;                                             // в Y/U ореол не нужен
+      fx.add(glow);
+      fx.rotation.set(0.32, -Math.PI / 2, 0, 'YXZ');                           // лицом к воротам (-u), наклон вниз
+      at(fx, wallU - 1.05, BY, hv + dv);
+      blinders.push(fx);
+    }
+  }
+  sound.rotation.y = -Math.PI / 2;                    // лицо системы (+Z) -> к воротам (-u)
+  at(sound, hu + HL / 2 - 4.5, 0, hv);                // отступ от задней стены с учётом постамента
+
+  // ---- топливо, бочки, генератор, прожекторы
+  for (const k of [0, 1]) {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 7, 12), lambert({ color: 0xeeeeea }));
+    tank.rotation.z = Math.PI / 2;
+    at(tank, -140 + k * 0, 2.1, 168 + k * 4.5);
+    for (const s of [-1, 1]) lbox(0.4, 0.9, 2.6, 0x6a6a66, -140 + s * 2.5, 0.45, 168 + k * 4.5);
+  }
+  lbox(1.2, 1.6, 1.2, 0xd42020, -133, 0.8, 172);                              // колонка
+  for (let i = 0; i < 5; i++) cyl(0.3, 0.3, 0.9, 8, i % 2 ? 0x2a4a8a : 0x3a3a38, -128 + (i % 3) * 0.7, 0.45, 166 + Math.floor(i / 3) * 0.7);
+  lbox(6, 2.6, 2.4, 0x5a7a5a, 70, 1.3, 162);                                  // генератор-контейнер
+  for (const [u, v] of [[-72, 164], [52, 164]]) {
+    lbox(0.3, 14, 0.3, 0x8e9296, u, 7, v);
+    const lamp = lbox(2.2, 0.6, 0.8, 0, u, 14.2, v + 0.3);
+    lamp.material = new THREE.MeshBasicMaterial({ color: 0xfff4d8 });
+  }
+
+  // ---- ветроуказатели: полосатый конус на мачте, колышется; у вышки — кольцо указателей
+  const sockTex = stripeTex(1, 10, ['#ff6a1a', '#f2f2ee'], false);
+  const SOCKS = [                                                            // [u, v, кольцо указателей на земле]
+    [RWY.u0 + 20, rv + hw + 18, false], [RWY.u1 - 20, rv + hw + 18, false], [(RWY.u0 + RWY.u1) / 2, rv - hw - 18, false],
+    [tu + 22, tv + 22, true], [20, 214, false], [AF.gate - 16, AF.v0 + 10, false],
+  ];
+  for (const [u, v, ring] of SOCKS) {
+    lbox(0.28, 10, 0.28, 0xf2f2ee, u, 5, v);                                   // мачта (в 1.6 раза выше)
+    lbox(0.3, 1.2, 0.3, 0xd42020, u, 9.4, v);
+    const sock = new THREE.Group(), cone = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.8, 5.4, 12, 1, true),
+      lambert({ map: sockTex, side: THREE.DoubleSide }));
+    cone.geometry.rotateZ(-Math.PI / 2);                                      // хвост по +x
+    cone.position.x = 2.7; sock.add(cone);
+    at(sock, u, 9.9, v);
+    const ph = Math.random() * 6.28;
+    airportAnim.push(t => {                                                   // ветер с поворотами и порывами
+      sock.rotation.y = 0.6 + Math.sin(t * 0.7 + ph) * 0.18 + Math.sin(t * 2.3 + ph) * 0.06;
+      sock.rotation.z = -0.12 - 0.12 * (0.5 + 0.5 * Math.sin(t * 1.3 + ph));
+    });
+    if (ring) for (let i = 0; i < 12; i++) {
+      const a = i / 12 * Math.PI * 2;
+      const m = flat(2.4, 0.9, u + Math.cos(a) * 12, v + Math.sin(a) * 12, 0.05, WHITE);
+      m.rotation.z = a + Math.PI / 2;
+    }
+  }
+
+  // ---- на полосе: Ан-2 "кукурузник" мятного цвета, там где рулёжка выходит на полосу, носом вдоль полосы
+  at(buildAn2(), 0, 0, RWY.v);                          // на осевой, напротив рулёжки от перрона (u = 0)
+
+  // ---- пожарная машина: наш автобус в красно-белом, с другой мордой, мигалками и лестницей
+  const fire = at(buildFireBus(), 58, 0, 215);
+  fire.rotation.y = -0.4;
+  fire.scale.setScalar(1.2);                          // крупнее автобуса в 1.2 раза
+
+  return g;
+}
+
+// ---------- Автобус ----------
+function box(w, h, d, color, x, y, z) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lambert({ color }));
+  m.position.set(x, y, z);
+  return m;
+}
+// Ikarus: белый кузов, зелёная полоса внизу, большое заднее стекло.
+// Грани кузова — пиксельные текстуры, ~20 px на метр.
+const BUS_W = 2.5, BUS_H = 2.65, BUS_L = 11, BUS_Y0 = 0.45;   // габариты и клиренс
+const WHITE = '#eeeee8', STRIPE = '#1f6b3a', GLASS = '#3e4858', DARK = '#161618';
+
+// палитра кузова: base — основной цвет, stripe — полоса, grille — решётка; fire — пожарная морда
+const BUS_PAL = { base: WHITE, stripe: STRIPE, grille: '#0e3a1e' };
+const FIRE_PAL = { base: '#c81e1e', stripe: '#f2f2ee', grille: '#d8d8d4', fire: true };
+const makeRearTex = (P) => pixelTexture(50, 54, (g, w, h) => {
+  g.fillStyle = P.base; g.fillRect(0, 0, w, h);
+  g.fillStyle = '#d4d4ce'; g.fillRect(0, 0, 1, h); g.fillRect(w - 1, 0, 1, h);
+  // заднее стекло: тёмная рамка, салон, спинки сидений
+  g.fillStyle = DARK; g.fillRect(4, 5, 42, 19);
+  g.fillStyle = '#7d8898'; g.fillRect(5, 6, 40, 17);
+  g.fillStyle = '#95a0ae'; g.fillRect(5, 6, 40, 4);
+  g.fillStyle = '#5c6470'; g.fillRect(12, 9, 26, 2); g.fillRect(22, 11, 2, 8);   // поручень, стойка
+  g.fillStyle = '#a88c84';
+  for (let x = 6; x < 44; x += 8) g.fillRect(x, 17, 7, 6);                       // сиденья
+  g.fillStyle = '#c8c8c2'; g.fillRect(3, 27, 44, 1);                               // шов панели
+  // полоса с фонарями и номером
+  g.fillStyle = P.stripe; g.fillRect(1, 39, 48, 9);
+  const lights = [['#f08a20', 3], ['#d42020', 8], ['#e8e8e4', 13]];
+  for (const [c, x] of lights) { g.fillStyle = c; g.fillRect(x, 41, 4, 4); g.fillRect(w - x - 4, 41, 4, 4); }
+  g.fillStyle = '#b4b4b0'; g.fillRect(20, 38, 10, 2);                              // подсветка номера
+  g.fillStyle = '#1a1a1a'; g.fillRect(21, 41, 8, 6);                               // номер
+  g.fillStyle = '#e8e8e8';
+  for (const x of [22, 24, 27]) g.fillRect(x, 42, 1, 1);
+  for (const x of [22, 24, 26, 27]) g.fillRect(x, 45, 1, 1);
+  // бампер
+  g.fillStyle = '#f4f4f0'; g.fillRect(0, 48, w, 6);
+  g.fillStyle = '#bcbcb6'; g.fillRect(0, 48, w, 1);
+  g.fillStyle = DARK; g.fillRect(11, 50, 6, 3); g.fillRect(33, 50, 6, 3);
+});
+const busRearTex = makeRearTex(BUS_PAL);
+
+const makeFrontTex = (P) => pixelTexture(50, 54, (g, w, h) => {
+  g.fillStyle = P.base; g.fillRect(0, 0, w, h);
+  g.fillStyle = DARK; g.fillRect(3, 3, 44, 5);                                     // табло маршрута
+  g.fillStyle = '#f0a020'; for (let x = 6; x < 44; x += 3) g.fillRect(x, 5, 2, 1);
+  g.fillStyle = DARK; g.fillRect(2, 9, 46, 20);                                    // лобовое
+  g.fillStyle = '#566478'; g.fillRect(3, 10, 21, 18); g.fillRect(26, 10, 21, 18);
+  g.fillStyle = '#7888a0'; g.fillRect(3, 10, 21, 4); g.fillRect(26, 10, 21, 4);
+  g.fillStyle = P.stripe; g.fillRect(1, 37, 48, 10);
+  if (P.fire) {                                                                     // пожарная морда
+    for (const cx of [5, 44]) {                                                     // круглые фары в хромовых ободках
+      g.fillStyle = '#d8d8d4'; g.fillRect(cx - 3, 38, 7, 7);
+      g.fillStyle = '#fff4c0'; g.fillRect(cx - 2, 39, 5, 5);
+      g.fillStyle = '#fffbe6'; g.fillRect(cx - 1, 40, 2, 2);
+    }
+    g.fillStyle = '#ff3a2a'; g.fillRect(11, 44, 3, 2); g.fillRect(36, 44, 3, 2);      // красные ходовые огни
+    g.fillStyle = '#9a1414'; g.fillRect(14, 38, 22, 8);                              // хромированная решётка
+    g.fillStyle = P.grille; for (let y = 39; y < 46; y += 2) g.fillRect(15, y, 20, 1);
+    g.fillStyle = '#9a1414'; g.fillRect(24, 38, 2, 8);
+  } else {
+    g.fillStyle = '#fff4c0'; g.fillRect(3, 39, 6, 5); g.fillRect(41, 39, 6, 5);    // фары
+    g.fillStyle = '#f08a20'; g.fillRect(10, 40, 2, 3); g.fillRect(38, 40, 2, 3);
+    g.fillStyle = P.grille; for (let y = 39; y < 46; y += 2) g.fillRect(15, y, 20, 1); // решётка
+  }
+  g.fillStyle = '#f4f4f0'; g.fillRect(0, 47, w, 7);
+  g.fillStyle = '#1a1a1a'; g.fillRect(21, 48, 8, 4);
+});
+const busFrontTex = makeFrontTex(BUS_PAL);
+
+// бок; перед справа (u=1). doors — рисовать ли двери (правый борт)
+function busSideTex(doors, P = BUS_PAL) {
+  return pixelTexture(220, 54, (g, w, h) => {
+    g.fillStyle = P.base; g.fillRect(0, 0, w, h);
+    g.fillStyle = DARK; g.fillRect(4, 6, 206, 17);                                 // оконный пояс
+    for (let x = 5; x < 196; x += 24) {
+      g.fillStyle = GLASS; g.fillRect(x, 7, 22, 15);
+      g.fillStyle = '#5a6678'; g.fillRect(x, 7, 22, 3);
+      g.fillStyle = '#9a8078'; g.fillRect(x + 2, 17, 18, 5);                         // спинки сидений
+    }
+    g.fillStyle = GLASS; g.fillRect(197, 7, 12, 15);                                // окно водителя
+    g.fillStyle = P.stripe; g.fillRect(0, 27, w, 1); g.fillRect(0, 39, w, 9);       // полосы
+    if (doors) for (const x of [101, 193]) {
+      g.fillStyle = DARK; g.fillRect(x, 6, 18, 44);
+      g.fillStyle = GLASS; g.fillRect(x + 1, 7, 7, 42); g.fillRect(x + 10, 7, 7, 42);
+    }
+    // колёсные арки: задняя ось в 3.1 м от кормы, передняя в 8.8 м
+    g.fillStyle = DARK;
+    for (const cx of [62, 176]) for (let r = 0; r < 10; r++) {
+      const half = Math.round(12 * Math.sqrt(1 - ((10 - r) / 11) ** 2));
+      g.fillRect(cx - half, 44 + r, half * 2, 1);
+    }
+    g.fillStyle = '#f08a20'; g.fillRect(2, 41, 2, 2); g.fillRect(w - 4, 41, 2, 2);  // повторители
+  });
+}
+const busRightTex = busSideTex(true);
+const busLeftTex = busSideTex(false);
+busLeftTex.repeat.x = -1; busLeftTex.offset.x = 1;  // у левой грани u идёт от носа к корме
+
+// Инверсия цветов обычных материалов (вариант автобуса в режиме U): текстура/цвет -> 1 - c, без освещения
+function invertMat(src, invert = true) {
+  const map = src.map || null;
+  if (map) map.updateMatrix();
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: map }, useMap: { value: map ? 1 : 0 }, uvTransform: { value: map ? map.matrix : new THREE.Matrix3() },
+      baseColor: { value: (src.color || new THREE.Color(1, 1, 1)).clone() },
+    },
+    vertexShader: `
+      uniform mat3 uvTransform; varying vec2 vUv;
+      void main() { vUv = (uvTransform * vec3(uv, 1.0)).xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `
+      uniform sampler2D map; uniform float useMap; uniform vec3 baseColor; varying vec2 vUv;
+      void main() {
+        vec3 c = useMap > 0.5 ? texture2D(map, vUv).rgb : baseColor;
+        gl_FragColor = vec4(1.0 - c, 1.0);
+      }`,
+  });
+}
+function buildBus() {
+  const bus = new THREE.Group();
+  const body = new THREE.Group();                   // качается; колёса остаются на земле
+  bus.add(body);
+
+  // порядок граней BoxGeometry: +x, -x, +y, -y, +z (корма), -z (нос)
+  const mats = [busRightTex, busLeftTex, null, null, busRearTex, busFrontTex]
+    .map((map, i) => lambert(map ? { map } : { color: i === 2 ? 0xe4e4de : 0x202022 }));
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(BUS_W, BUS_H, BUS_L), mats);
+  hull.position.y = BUS_Y0 + BUS_H / 2;
+  body.add(hull);
+  const extras = [
+    box(BUS_W - 0.3, 0.12, BUS_L - 0.3, 0xe4e4de, 0, BUS_Y0 + BUS_H + 0.06, 0),   // скруглённая крыша
+    box(0.12, 0.12, 0.12, 0xd0d0cc, -0.9, BUS_Y0 + BUS_H + 0.15, 5.2),           // маячки на крыше
+    box(0.12, 0.12, 0.12, 0xd0d0cc, 0.9, BUS_Y0 + BUS_H + 0.15, 5.2),
+  ];
+  for (const s of [-1, 1]) extras.push(box(0.08, 0.5, 0.25, DARK, s * 1.45, 2.3, -5.4));   // зеркала
+  body.add(...extras);
+
+  // колёса: 8-гранные цилиндры в поворотных шарнирах
+  const wheelGeo = new THREE.CylinderGeometry(0.5, 0.5, 0.32, 8);
+  wheelGeo.rotateZ(Math.PI / 2);
+  const wheelMat = lambert({ color: 0x141414 });
+  const front = [], hubs = [], tyres = [];
+  for (const z of [-3.3, 2.4]) for (const s of [-1, 1]) {
+    const pivot = new THREE.Group();
+    pivot.position.set(s * 1.05, 0.5, z);
+    const tyre = new THREE.Mesh(wheelGeo, wheelMat);
+    pivot.add(tyre); tyres.push(tyre);
+    const hub = xrayBox(0.36, 0.5, 0.5, 0, 0, 0, XRAY_MID);                    // обод/ступица на рентгене
+    pivot.add(hub); hubs.push(hub);
+    bus.add(pivot);
+    if (z < 0) front.push(pivot);
+  }
+
+  // рентген: каркас и начинка (видны только пока держишь Y)
+  const xray = buildBusXray();
+  body.add(xray.inBody);
+  bus.add(xray.chassis);
+
+  const ghost = new THREE.MeshBasicMaterial({ color: 0x2a64ff, transparent: true, opacity: 0.35 * XR_OPACITY, depthWrite: false });
+  bus.userData.setXray = (on) => {
+    hull.material = on ? ghost : mats;
+    for (const m of extras) m.visible = !on;
+    for (const h of hubs) h.visible = on;
+    for (const t of tyres) t.material = on ? XRAY_BONE : wheelMat;
+    xray.inBody.visible = xray.chassis.visible = on;
+  };
+  // режим U, вариант "инвертированный": обычный автобус с обратными цветами, без освещения
+  const extrasMat = extras.map(m => m.material);
+  const invHull = mats.map(m => invertMat(m, true)), invExtras = extras.map(m => invertMat(m.material, true));
+  const invWheel = invertMat(wheelMat, true);
+  bus.userData.setInvert = (on) => {
+    hull.material = on ? invHull : mats;
+    extras.forEach((m, i) => { m.material = on ? invExtras[i] : extrasMat[i]; });
+    for (const t of tyres) t.material = on ? invWheel : wheelMat;
+  };
+  // единая точка: 'normal' | 'xray' (режим Y и вариант U) | 'invert' (вариант U)
+  bus.userData.setLook = (look) => {
+    bus.userData.setInvert(false);
+    bus.userData.setXray(false);
+    if (look === 'xray') bus.userData.setXray(true);
+    if (look === 'invert') bus.userData.setInvert(true);
+  };
+  // рентген — пиксельный, вместе с миром; начинка рисуется после корпуса-призрака, поверх него
+  hull.renderOrder = 1;
+  for (const o of [xray.inBody, xray.chassis, ...hubs, ...tyres]) o.traverse(m => { m.renderOrder = 2; });
+  bus.userData.hull = hull;
+  bus.userData.setXray(false);
+  bus.userData.frontWheels = front;
+  bus.userData.body = body;
+  return bus;
+}
+
+// ---------- Рентген автобуса ----------
+// Белое на синем, как на снимке: корпус — полупрозрачный синий, каркас и начинка — белые.
+// transparent + opacity 1: рисуются в прозрачном проходе после корпуса-призрака и не подкрашиваются им
+const BUS_XRAY_OPACITY = XR_OPACITY * 1.11;   // каркас автобуса на 11% непрозрачнее прочих конструкций (~0.8)
+const xrayMat = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: BUS_XRAY_OPACITY });
+const XRAY_BONE = xrayMat(0xffffff);
+const XRAY_SOFT = xrayMat(0xe6eeff);
+const XRAY_MID = xrayMat(0x8ab0ff);
+function xrayBox(w, h, d, x, y, z, mat = XRAY_BONE) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.position.set(x, y, z);
+  return m;
+}
+// ---------- Пассажир ----------
+// Предпоследний ряд (z = 2.8, 2.7 м от кормы), левое окно. Смотрит в окно, иногда чешет нос,
+// кивает под трек. Обычный режим — пиксели в текстурах (заднее стекло и 3-е окно слева от кормы),
+// Y/U — скелет в рентгене.
+const PASSENGER_ON = false;              // пассажир пока убран (true — вернуть)
+const PASSENGER = { x: -0.95, z: 2.8 };
+const PAX_OPACITY = 0.9;                 // пассажир в Y/U чуть непрозрачнее каркаса автобуса (~0.8)
+let passengerRig = null;                 // кости, которые двигаются: голова, правая рука
+function buildPassengerSkeleton() {
+  const g = new THREE.Group();
+  g.position.set(PASSENGER.x, 0, PASSENGER.z);
+  const BONE = XRAY_BONE.clone(), MID = XRAY_MID.clone();
+  BONE.opacity = MID.opacity = PAX_OPACITY;
+  const b = (w, h, d, x, y, z, mat = BONE, parent = g) => {
+    const m = xrayBox(w, h, d, x, y, z, mat); parent.add(m); return m;
+  };
+  b(0.3, 0.07, 0.15, 0, 1.05, 0);                                    // таз
+  b(0.05, 0.55, 0.05, 0, 1.35, 0.03);                                // позвоночник
+  for (const y of [1.33, 1.41, 1.49]) b(0.3, 0.025, 0.17, 0, y, -0.02);   // рёбра
+  b(0.36, 0.04, 0.06, 0, 1.58, 0.02);                                // ключицы
+  for (const sx of [-1, 1]) {
+    b(0.06, 0.06, 0.45, sx * 0.1, 1.05, -0.22);                      // бёдра — вперёд
+    b(0.05, 0.45, 0.05, sx * 0.1, 0.8, -0.45);                       // голени
+  }
+  b(0.05, 0.28, 0.05, -0.19, 1.43, 0.02);                            // левое плечо — вниз
+  b(0.05, 0.05, 0.26, -0.19, 1.29, -0.1);                            // левое предплечье на колене
+  // голова на шее: повёрнута к окну (-x), кивает
+  const head = new THREE.Group();
+  head.position.set(0, 1.63, 0.02);
+  head.rotation.y = 1.3;
+  b(0.04, 0.08, 0.04, 0, 0.04, 0, BONE, head);                  // шея
+  b(0.18, 0.2, 0.2, 0, 0.18, 0, BONE, head);                    // череп
+  b(0.12, 0.05, 0.09, 0, 0.07, -0.08, BONE, head);              // челюсть — по лицу
+  b(0.03, 0.04, 0.03, 0, 0.15, -0.115, MID, head);              // нос
+  g.add(head);
+  // правая рука: плечо -> локоть -> кисть (чешет нос)
+  const upper = new THREE.Group(), fore = new THREE.Group();
+  upper.position.set(0.19, 1.57, 0.02);
+  b(0.05, 0.28, 0.05, 0, -0.14, 0, BONE, upper);
+  fore.position.set(0, -0.28, 0);
+  b(0.05, 0.05, 0.26, 0, 0, -0.13, BONE, fore);
+  b(0.06, 0.06, 0.06, 0, 0, -0.27, MID, fore);                  // кисть
+  upper.add(fore);
+  g.add(upper);
+  passengerRig = { head, upper, fore, group: g };
+  return g;
+}
+function buildBusXray() {
+  const g = new THREE.Group();                      // качается вместе с кузовом
+  const y0 = BUS_Y0, y1 = BUS_Y0 + BUS_H, hw = BUS_W / 2 - 0.04, T = 0.035;   // толщина брусков каркаса
+  // каркас: стойки между окнами, дуги крыши, продольные пояса
+  for (let z = -5.4; z <= 5.41; z += 1.2) {
+    for (const s of [-1, 1]) g.add(xrayBox(T, BUS_H, T, s * hw, y0 + BUS_H / 2, z));
+    g.add(xrayBox(BUS_W - 0.08, T, T, 0, y1 - 0.04, z));
+  }
+  for (const y of [y0 + 0.04, 1.97, y1 - 0.04]) for (const s of [-1, 1]) g.add(xrayBox(T, T, BUS_L, s * hw, y, 0));
+  for (const z of [-BUS_L / 2 + 0.04, BUS_L / 2 - 0.04]) {             // рамки носа и кормы
+    g.add(xrayBox(BUS_W - 0.08, T, T, 0, 1.97, z));
+    g.add(xrayBox(BUS_W - 0.08, T, T, 0, y0 + 0.04, z));
+  }
+  // сиденья: по два с каждой стороны прохода, лицом вперёд; справа пропуск у средней двери
+  for (let z = -3.6; z <= 4.25; z += 0.8) for (const s of [-1, 1]) {
+    if (s > 0 && Math.abs(z) < 0.6) continue;
+    for (const x of [0.52, 0.95]) {
+      g.add(xrayBox(0.4, 0.1, 0.42, s * x, 0.95, z, XRAY_SOFT));        // сидушка
+      g.add(xrayBox(0.4, 0.55, 0.08, s * x, 1.27, z + 0.21, XRAY_SOFT)); // спинка
+      g.add(xrayBox(0.025, 0.45, 0.025, s * x, 0.72, z));                // ножка
+    }
+  }
+  // водитель: кресло, руль, торпедо
+  g.add(xrayBox(0.45, 0.1, 0.45, -0.7, 0.95, -4.3, XRAY_SOFT));
+  g.add(xrayBox(0.45, 0.6, 0.08, -0.7, 1.3, -4.08, XRAY_SOFT));
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.22, 0.018, 4, 12), XRAY_BONE);
+  wheel.position.set(-0.7, 1.5, -4.85); wheel.rotation.x = -1.1;
+  g.add(wheel, xrayBox(0.025, 0.025, 0.5, -0.7, 1.35, -5.05));
+  g.add(xrayBox(BUS_W - 0.2, 0.12, 0.35, 0, 1.3, -5.25));
+  // двигатель в корме с головками цилиндров + кардан к заднему мосту
+  g.add(xrayBox(1.3, 0.9, 1.0, 0, 1.05, 4.8));
+  for (let i = 0; i < 6; i++) g.add(xrayBox(0.16, 0.18, 0.16, -0.45 + i * 0.18, 1.6, 4.8, XRAY_MID));
+  g.add(xrayBox(0.05, 0.05, 1.9, 0, 0.6, 3.35));
+  // рама
+  for (const s of [-1, 1]) g.add(xrayBox(0.06, 0.09, BUS_L - 0.4, s * 0.5, 0.55, 0));
+
+  const chassis = new THREE.Group();                // мосты — на колёсах, не качаются
+  for (const z of [-3.3, 2.4]) chassis.add(xrayBox(2.1, 0.06, 0.06, 0, 0.5, z));
+  chassis.add(xrayBox(0.4, 0.35, 0.4, 0, 0.5, 2.4));                 // редуктор заднего моста
+  if (PASSENGER_ON) g.add(buildPassengerSkeleton());
+  return { inBody: g, chassis };
+}
+const bus = buildBus();
+
+// аэродром (после автобуса: пожарная машина берёт его текстуры и размеры)
+let airportGroup = null;
+{
+  const site = AIRPORT_S / TRACK_LEN;
+  const p = curve.getPointAt(site), tan = curve.getTangentAt(site);
+  const airport = airportGroup = buildAirport();
+  airport.position.set(p.x, 0, p.z);
+  airport.rotation.y = Math.atan2(-tan.z, tan.x);     // как у станции локаторов: X — вдоль дороги, -Z — внутрь кольца
+  scene.add(airport);
+}
+
+// пиксельный пассажир: заднее стекло (вид сзади: затылок над спинками, повёрнут влево к окну)
+// и 3-е окно слева от кормы (вид снаружи: лицо в окне). Перерисовка только при смене кадра анимации.
+const PAX = { hair: '#3a2a1e', skin: '#e0aa82', skinDark: '#c48a66', eye: '#1a1210', jacket: '#465468' };
+const paxRear = { ctx: busRearTex.image.getContext('2d'), tex: busRearTex, x: 5, y: 6, w: 16, h: 17 };
+const paxSide = { ctx: busLeftTex.image.getContext('2d'), tex: busLeftTex, x: 53, y: 7, w: 22, h: 15 };
+for (const r of [paxRear, paxSide]) r.orig = r.ctx.getImageData(r.x, r.y, r.w, r.h);
+function drawPassenger(drop, scratch, rub) {
+  // сзади
+  let g = paxRear.ctx;
+  g.putImageData(paxRear.orig, paxRear.x, paxRear.y);
+  g.fillStyle = PAX.jacket; g.fillRect(6, 15, 8, 2);                          // плечи над спинками
+  g.fillStyle = PAX.hair; g.fillRect(8, 11 + drop, 4, 4);                     // затылок
+  g.fillStyle = PAX.skin; g.fillRect(8, 13 + drop, 1, 1);                     // щека — голова к окну
+  if (scratch) {                                                              // локоть поднят к лицу
+    g.fillStyle = PAX.jacket; g.fillRect(6, 14, 1, 1); g.fillRect(7, 13, 1, 1);
+    g.fillStyle = PAX.skin; g.fillRect(8, 12 + drop + rub, 1, 1);
+  }
+  paxRear.tex.needsUpdate = true;
+  // в окне слева — лицом к стеклу
+  g = paxSide.ctx;
+  g.putImageData(paxSide.orig, paxSide.x, paxSide.y);
+  g.fillStyle = PAX.jacket; g.fillRect(58, 16, 9, 6);                         // плечи, куртка
+  g.fillStyle = PAX.skin; g.fillRect(61, 15 + drop, 3, 1);                    // шея
+  g.fillStyle = PAX.hair; g.fillRect(60, 9 + drop, 5, 2);
+  g.fillStyle = PAX.skin; g.fillRect(60, 11 + drop, 5, 4);                    // лицо
+  g.fillStyle = PAX.eye; g.fillRect(61, 12 + drop, 1, 1); g.fillRect(63, 12 + drop, 1, 1);
+  g.fillStyle = PAX.skinDark; g.fillRect(62, 13 + drop, 1, 1);                // нос
+  if (scratch) {                                                              // рука у носа, трёт
+    g.fillStyle = PAX.jacket; g.fillRect(65, 16, 1, 1); g.fillRect(64, 15 + drop, 1, 1);
+    g.fillStyle = PAX.skin; g.fillRect(62 + rub, 14 + drop, 2, 1);
+  }
+  paxSide.tex.needsUpdate = true;
+}
+const pax = { nextScratch: 5 + Math.random() * 8, scratchLeft: 0, key: '' };
+function updatePassenger(dt, time) {
+  if (!PASSENGER_ON) return;
+  // кивок под трек: короткий на каждой доле
+  let nod = 0;
+  if (TD && !music.paused) {
+    const t = music.currentTime + AUDIO_LOOKAHEAD, bi = lastBefore(TD.beats, t);
+    if (bi >= 0) nod = Math.exp(-(t - TD.beats[bi][0]) / 0.14) * Math.min(1, TD.beats[bi][1] + 0.3);
+  }
+  // иногда чешет нос: раз в 8–20 с, ~1.5 с
+  if (pax.scratchLeft > 0) pax.scratchLeft -= dt;
+  else if ((pax.nextScratch -= dt) <= 0) { pax.scratchLeft = 1.5; pax.nextScratch = 8 + Math.random() * 12; }
+  const scratch = pax.scratchLeft > 0, rub = scratch ? Math.floor(time * 8) % 2 : 0;
+  const drop = nod > 0.45 ? 1 : 0;
+  const key = drop + '|' + scratch + '|' + rub;
+  if (key !== pax.key) { pax.key = key; drawPassenger(drop, scratch, rub); }
+  // скелет
+  if (passengerRig) {
+    const { head, upper, fore } = passengerRig;
+    head.rotation.x = -0.35 * nod;                                            // кивок
+    const k = scratch ? 1 : 0;
+    upper.rotation.x += ((k ? -1.35 : 0) - upper.rotation.x) * Math.min(1, dt * 10);
+    upper.rotation.z += ((k ? 0.35 : 0) - upper.rotation.z) * Math.min(1, dt * 10);
+    fore.rotation.x += ((k ? -1.55 + (rub ? 0.15 : -0.15) : 0) - fore.rotation.x) * Math.min(1, dt * 14);
+  }
+}
+if (PASSENGER_ON) drawPassenger(0, false, 0);
+bus.userData.xrSkip = true;             // автобус переключает рентген сам
+scene.add(bus);
+
+// ---------- Следы шин (ручник) ----------
+// Кольцевой буфер квадов под задними колёсами; старые следы перезаписываются новыми.
+const SKID_MAX = 4000, SKID_W = 0.3;
+const skidPos = new Float32Array(SKID_MAX * 4 * 3);
+const skidIdx = [];
+for (let i = 0; i < SKID_MAX; i++) { const b = i * 4; skidIdx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); }
+const skidGeo = new THREE.BufferGeometry();
+skidGeo.setAttribute('position', new THREE.BufferAttribute(skidPos, 3));
+skidGeo.setIndex(skidIdx);
+const skidMesh = new THREE.Mesh(skidGeo, new THREE.MeshBasicMaterial({
+  color: 0x1c1616, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
+skidMesh.userData.xr = new THREE.MeshBasicMaterial({
+  color: 0x9ab8ff, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+skidMesh.frustumCulled = false;                    // буфер заполняется на лету
+scene.add(skidMesh);
+
+let skidNext = 0;
+const REAR_WHEELS = [[-1.05, 2.4], [1.05, 2.4]];   // локальные x, z задних колёс
+const skidLast = [null, null];
+function updateSkids(on) {
+  const c = Math.cos(car.heading), s = Math.sin(car.heading);
+  REAR_WHEELS.forEach(([lx, lz], w) => {
+    if (!on) { skidLast[w] = null; return; }
+    const x = car.x + lx * c + lz * s, z = car.z - lx * s + lz * c;
+    const prev = skidLast[w];
+    if (prev) {
+      const dx = x - prev[0], dz = z - prev[1], len = Math.hypot(dx, dz);
+      if (len < 0.05) return;
+      const nx = (-dz / len) * SKID_W / 2, nz = (dx / len) * SKID_W / 2, y = 0.06;
+      skidPos.set([prev[0] - nx, y, prev[1] - nz, prev[0] + nx, y, prev[1] + nz,
+                   x - nx, y, z - nz, x + nx, y, z + nz], skidNext * 12);
+      skidNext = (skidNext + 1) % SKID_MAX;
+      skidGeo.attributes.position.needsUpdate = true;
+    }
+    skidLast[w] = [x, z];
+  });
+}
+
+// ---------- Состояние ----------
+// старт: правая полоса (движение правостороннее)
+const start = frames[0];
+const startTan = curve.getTangentAt(0);
+const car = {
+  x: start.p.x + start.side.x * ROAD_WIDTH / 4,
+  z: start.p.z + start.side.z * ROAD_WIDTH / 4,
+  heading: Math.atan2(-startTan.x, -startTan.z), // "вперёд" = касательная
+  speed: 0, steer: 0, yawRate: 0, accel: 0, pitch: 0, roll: 0, gas: 0, brake: 0,
+};
+
+// ---------- Музыка ----------
+// Браузер разрешает звук только после действия пользователя — стартуем на первую клавишу/клик.
+const music = document.getElementById('music');
+const TD = window.TRACK_DATA || null;
+const startMusic = () => { if (music.paused) music.play().catch(() => {}); };
+addEventListener('pointerdown', startMusic);
+// телефон: звук и полный экран браузер разрешает по отпусканию пальца (pointerup/touchend), не по касанию
+const goFullscreen = () => {
+  const d = document.documentElement;
+  if (!document.fullscreenElement && d.requestFullscreen) d.requestFullscreen({ navigationUI: 'hide' }).catch(() => {});
+};
+for (const ev of ['pointerup', 'touchend']) addEventListener(ev, () => { startMusic(); goFullscreen(); });
+
+// огибающая баса, сглаженная вперёд-назад (без сдвига по времени)
+const bassEnv = (() => {
+  if (!TD) return null;
+  const a = TD.bass.map(v => v / 99), k = 0.25;
+  for (let i = 1; i < a.length; i++) a[i] += (a[i - 1] - a[i]) * (1 - k);
+  for (let i = a.length - 2; i >= 0; i--) a[i] += (a[i + 1] - a[i]) * (1 - k);
+  return a;
+})();
+
+// индекс последнего события с временем <= t (бинарный поиск по [[t, сила], ...])
+function lastBefore(list, t) {
+  let lo = 0, hi = list.length - 1, r = -1;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (list[m][0] <= t) { r = m; lo = m + 1; } else hi = m - 1; }
+  return r;
+}
+
+// крен/проседание кузова от музыки в момент t
+function musicPose(t) {
+  const pose = { roll: 0, y: 0, pitch: 0 };
+  if (!TD || music.paused) return pose;
+  // крен: маятник с крайними точками на долях, сторона чередуется
+  const bi = lastBefore(TD.beats, t);
+  if (bi >= 0 && bi < TD.beats.length - 1) {
+    const [b0, s0] = TD.beats[bi], [b1, s1] = TD.beats[bi + 1];
+    const u = (t - b0) / (b1 - b0);
+    const s = s0 + (s1 - s0) * u;                    // сила доли, плавно между долями
+    pose.roll = SWAY_ROLL * Math.min(1, s) * Math.cos(Math.PI * (bi + u));
+  }
+  // бочка: кузов подпрыгивает и мягко садится с затухающим отскоком
+  for (let i = lastBefore(TD.kicks, t); i >= 0 && t - TD.kicks[i][0] < 0.6; i--) {
+    const d = t - TD.kicks[i][0], s = TD.kicks[i][1];
+    const r = Math.exp(-d / 0.14) * Math.cos(d * 16);
+    pose.y += KICK_HOP * s * r;
+    pose.pitch += 0.008 * s * r;                      // нос подлетает чуть выше кормы
+  }
+  pose.y += BASS_LIFT * (bassEnv[Math.min(bassEnv.length - 1, Math.floor(t * TD.fps))] || 0);
+  return pose;
+}
+
+// перемотка: Q/E — ±5 с (с Shift ±30 с), 1..9/0 — к 10..90% / в начало, P — пауза
+function seekMusic(t) {
+  if (!isFinite(music.duration)) return;
+  music.currentTime = Math.max(0, Math.min(music.duration - 0.1, t));
+}
+function musicKeys(e) {
+  const step = e.shiftKey ? 30 : 5;
+  if (e.code === 'KeyQ') seekMusic(music.currentTime - step);
+  else if (e.code === 'KeyE') seekMusic(music.currentTime + step);
+  else if (/^Digit\d$/.test(e.code)) seekMusic(music.duration * Number(e.code[5]) / 10);
+  else if (e.code === 'KeyP') { music.paused ? music.play().catch(() => {}) : music.pause(); return true; }
+  return false;
+}
+
+// ---------- Ввод ----------
+// ---------- Живые жилы (режим Y) ----------
+// Жилы всегда есть в мире — режим Y их только проявляет. Трасса разбита на куски (~250 м);
+// у каждого куска своё фиксированное зерно, поэтому жилы на одном месте всегда одинаковые.
+// Куски вокруг автобуса строятся заранее (и без Y) и выгружаются позади.
+const VEIN_CHUNK = 60;                   // кадров трассы в куске (~4 м каждый)
+const VEIN_KEEP_BEHIND = 1, VEIN_KEEP_AHEAD = 3;   // сколько кусков держать позади и впереди
+const VEIN_CHUNKS = Math.ceil(SEG / VEIN_CHUNK);
+const veinGroundRoot = new THREE.Group(), roadVeinRoot = new THREE.Group();
+const veinSkyRoot = new THREE.Group(), vineRoot = new THREE.Group(), gravelRoot = new THREE.Group();
+for (const g of [veinGroundRoot, roadVeinRoot, veinSkyRoot, vineRoot, gravelRoot]) { g.visible = false; g.userData.xrSkip = true; scene.add(g); }
+const veinChunks = new Map();            // номер куска -> { ground, sky }
+
+function nearestFrameIdx(x, z) {
+  let best = Infinity, bi = 0;
+  for (let i = 0; i < SEG; i++) {
+    const p = frames[i].p, d = (p.x - x) ** 2 + (p.z - z) ** 2;
+    if (d < best) { best = d; bi = i; }
+  }
+  return bi;
+}
+function seededRandom(seed) {            // mulberry32
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+// опоры по кускам трассы (по ближайшему кадру основания)
+const towersByChunk = new Map();
+function indexTowers() {
+  const pos = V3(0, 0, 0);
+  for (const T of POWER_TOWERS) {
+    pos.setFromMatrixPosition(T);
+    const fi = nearestFrameIdx(pos.x, pos.z), c = Math.floor(fi / VEIN_CHUNK);
+    if (!towersByChunk.has(c)) towersByChunk.set(c, []);
+    towersByChunk.get(c).push([T, fi]);
+  }
+}
+
+// вероятность ответвления на шаг: поле, дорога (×4 — у деревьев на асфальте, почти каждая развилка), небо, усики лиан
+const BRANCH_P = { field: 0.2, road: 0.18, sky: 0.09, vine: 0.13 };
+// острота обоих концов: ширина растёт из нуля в начале ветви и сходит в ноль к кончику (за tip метров)
+const pointy = (d, dStart, dEnd, tip) => Math.max(0, Math.min(1, (d - dStart) / tip, (dEnd - d) / tip));
+// точки ветви [x, z, ширина, путь] -> полоска на земле с острыми концами
+// напольные жилы не строго на полу: высота вдоль ветви плавно волнуется (ниже нуля — "ныряет" под землю)
+const FLOOR_LIFT = { field: 3.2, road: 1.4 };    // м — размах подъёма/ныряния (дугами, как корни из грунта)
+function liftFn(rnd, amp, d0, y0) {              // y(d), непрерывна в начале ветви (y(d0) = y0)
+  const a = amp * (0.4 + rnd() * 0.8), f = 0.08 + rnd() * 0.1, ph = rnd() * 6.28;
+  return d => y0 + a * (Math.sin(d * f + ph) - Math.sin(d0 * f + ph));
+}
+function emitRibbon(out, pts, tip, tipStart = tip) {
+  if (pts.length < 2) return;
+  const dStart = pts[0][3], dEnd = pts[pts.length - 1][3];
+  const wAt = q => q[2] * Math.max(0, Math.min(1, (q[3] - dStart) / tipStart, (dEnd - q[3]) / tip));
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, z0, , d0, y0] = pts[i - 1], [x1, z1, , d1, y1] = pts[i];
+    const w0 = wAt(pts[i - 1]), w1 = wAt(pts[i]);
+    const len = Math.hypot(x1 - x0, z1 - z0) || 1, nx = -(z1 - z0) / len, nz = (x1 - x0) / len;
+    out.pos.push(
+      x0 + nx * w0 / 2, y0, z0 + nz * w0 / 2,  x0 - nx * w0 / 2, y0, z0 - nz * w0 / 2,  x1 + nx * w1 / 2, y1, z1 + nz * w1 / 2,
+      x0 - nx * w0 / 2, y0, z0 - nz * w0 / 2,  x1 - nx * w1 / 2, y1, z1 - nz * w1 / 2,  x1 + nx * w1 / 2, y1, z1 + nz * w1 / 2);
+    out.dist.push(d0, d0, d1, d0, d1, d1);
+  }
+}
+// ветвистая жила в поле: ломаная со случайным изгибом, сужается, иногда ветвится;
+// обрывается, дойдя до обочины (смещение считается относительно кадра трассы f рядом с корнем)
+function growGround(rnd, out, x, z, ang, w, maxSteps, f) {
+  const offRoad = (px, pz) => Math.abs((px - f.p.x) * f.side.x + (pz - f.p.z) * f.side.z) > halfS + 0.3;
+  const stack = [[x, z, ang, w, 0, maxSteps, 0, 0.07]];
+  while (stack.length) {
+    let [x0, z0, a, w0, d0, steps, depth, yStart] = stack.pop();
+    const lift = liftFn(rnd, FLOOR_LIFT.field, d0, yStart);
+    const pts = [[x0, z0, w0, d0, yStart]];
+    for (let s = 0; s < steps; s++) {
+      const step = 1.8 + rnd() * 1.8;
+      a += (rnd() - 0.5) * 0.7;
+      const x1 = x0 + Math.cos(a) * step, z1 = z0 + Math.sin(a) * step, w1 = w0 * 0.955;
+      if (!offRoad(x1, z1)) break;
+      x0 = x1; z0 = z1; w0 = w1; d0 += step;
+      pts.push([x0, z0, w0, d0, lift(d0)]);
+      if (w0 < 0.08) break;
+      if (depth < 4 && rnd() < BRANCH_P.field) {        // ветвление: не глубже 4 уровней, ветви короче
+        const turn = (rnd() < 0.5 ? -1 : 1) * (0.4 + rnd() * 0.6);
+        stack.push([x0, z0, a + turn, w0 * 0.65, d0, Math.floor((steps - s) * 0.75), depth + 1, lift(d0)]);
+      }
+    }
+    emitRibbon(out, pts, 6);                             // острый кончик: последние 6 м
+  }
+}
+// ветвистая жила в небе: 3D-ломаная, тянется вверх и в стороны
+const SKY_REACH = 0.89;                  // длина жил в небе (0.89 — на 11% короче исходной)
+const SKY_BRANCH_P = BRANCH_P.sky, SKY_BRANCH_DEPTH = 2;   // ветвление жил в небе: вероятность на шаг и глубина
+function growSky(rnd, out, p, dir, dist, maxSteps, root) {
+  const stack = [[p.clone(), dir.clone(), dist, maxSteps, 0]];
+  const jitter = new THREE.Vector3();
+  while (stack.length) {
+    let [q, d, d0, steps, depth] = stack.pop();
+    const segs = [], thick = [1, 0.6, 0.4][depth] || 0.3;
+    for (let s = 0; s < steps; s++) {
+      const step = 2 + rnd() * 2.5;
+      jitter.set(rnd() - 0.5, (rnd() - 0.5) * 0.6, rnd() - 0.5).multiplyScalar(0.8);
+      d.add(jitter).normalize();
+      if (d.y < 0.1) { d.y = 0.1 + rnd() * 0.2; d.normalize(); }
+      const q1 = q.clone().addScaledVector(d, step);
+      segs.push([q, q1, d0, d0 + step]);
+      q = q1; d0 += step;
+      if (depth < SKY_BRANCH_DEPTH && rnd() < SKY_BRANCH_P) {
+        const b = d.clone().add(jitter.set(rnd() - 0.5, 0.2, rnd() - 0.5).multiplyScalar(1.6)).normalize();
+        stack.push([q.clone(), b, d0, Math.floor((steps - s) * 0.7), depth + 1]);
+      }
+    }
+    emitFat(out, segs, root, thick, 12);                 // острый кончик: последние 12 м
+  }
+}
+// сегменты [A, B, путь A, путь B] толстой линии -> данные; оба конца острые (tip метров)
+function emitFat(out, segs, root, thick, tip) {
+  if (!segs.length) return;
+  const dStart = segs[0][2], dEnd = segs[segs.length - 1][3];
+  for (const [A, B, dA, dB] of segs) {
+    out.pos.push(A.x, A.y, A.z, B.x, B.y, B.z);
+    out.dist.push(dA, dB);
+    out.root.push(...root);
+    out.taper.push(thick * pointy(dA, dStart, dEnd, tip), thick * pointy(dB, dStart, dEnd, tip));
+  }
+}
+// лиана, обвивающая опору: спираль вокруг ноги -> по "бокалу" к траверсе -> вдоль траверсы до конца,
+// с короткими закрученными усиками. Точки строятся в координатах опоры и переводятся матрицей T.
+const VINE_WRAP = 1;                     // множитель радиуса витков лиан вокруг опоры
+function growVine(rnd, out, T, sx, sz, root) {
+  const pts = [];                                        // [локальная точка, радиус витка]
+  const W = TW_WAIST, A2 = TW_ARM;
+  const leg = u => V3(sx * (4 - 2.5 * u), W * u, sz * (4 - 2.5 * u));
+  const turnsLeg = 5 + rnd() * 3, phase = rnd() * 6.28;
+  for (let i = 0; i <= 90; i++) {                        // по ноге, от земли до талии
+    const u = i / 90, th = phase + u * turnsLeg * 6.28, r = VINE_WRAP * (1.1 - 0.35 * u);
+    pts.push(leg(u).add(V3(Math.cos(th) * r, 0, Math.sin(th) * r)));
+  }
+  const a = V3(sx * 1.5, W, sz * 1.5), b = V3(sx * 6, A2, sz * 1.2);
+  for (let i = 1; i <= 30; i++) {                        // по плечу "бокала"
+    const u = i / 30, th = phase + (turnsLeg + u * 2) * 6.28;
+    pts.push(a.clone().lerp(b, u).add(V3(Math.cos(th) * 0.8 * VINE_WRAP, 0, Math.sin(th) * 0.8 * VINE_WRAP)));
+  }
+  for (let i = 1; i <= 30; i++) {                        // вдоль траверсы к концу
+    const u = i / 30, x = sx * (6 + 5 * u), th = phase + (turnsLeg + 2 + u * 3) * 6.28;
+    pts.push(V3(x, A2 + Math.cos(th) * 0.8 * VINE_WRAP, sz * 1.2 * (1 - u) + Math.sin(th) * 0.8 * VINE_WRAP));
+  }
+  let d0 = 0;
+  const world = pts.map(q => q.applyMatrix4(T)), stem = [];
+  for (let i = 1; i < world.length; i++) {
+    const p0 = world[i - 1], p1 = world[i], seg = p0.distanceTo(p1);
+    stem.push([p0, p1, d0, d0 + seg]);
+    d0 += seg;
+    if (rnd() < BRANCH_P.vine) {                         // усик: короткая закручивающаяся спираль наружу
+      const dir = V3(rnd() - 0.5, rnd() * 0.6, rnd() - 0.5).normalize();
+      const side = V3(0, 1, 0).cross(dir).normalize();
+      let q = p1.clone(), dd = d0;
+      const len = 5 + rnd() * 6, n = 12, curl = [];
+      for (let k = 1; k <= n; k++) {
+        const t = k / n, c = t * 7, rad = 0.9 * t;
+        const q1 = p1.clone().addScaledVector(dir, len * t)
+          .addScaledVector(side, Math.cos(c) * rad).add(V3(0, Math.sin(c) * rad, 0));
+        const sg = q.distanceTo(q1);
+        curl.push([q, q1, dd, dd + sg]);
+        dd += sg; q = q1;
+      }
+      emitFat(out, curl, root, 0.6, (dd - d0) / 2);      // усик: веретено, острый с обоих концов
+    }
+  }
+  emitFat(out, stem, root, 1, 6);                        // стебель: острый кончик на конце траверсы
+}
+// точка трассы: s — метры вдоль (по кадрам, с интерполяцией), lat — поперёк (+ вправо)
+function roadPoint(s, lat) {
+  const fi = ((s / FRAME_STEP) % SEG + SEG) % SEG, i = Math.floor(fi), u = fi - i;
+  const a = frames[i], b = frames[(i + 1) % SEG];
+  const px = a.p.x + (b.p.x - a.p.x) * u, pz = a.p.z + (b.p.z - a.p.z) * u;
+  const sx = a.side.x + (b.side.x - a.side.x) * u, sz = a.side.z + (b.side.z - a.side.z) * u;
+  return [px + sx * lat, pz + sz * lat];
+}
+// дерево вдоль асфальта: ствол идёт вдоль дороги почти прямо, ветви отходят вперёд под острым углом
+// попеременно влево/вправо, сами ветвятся и плавно доворачивают вдоль дороги; у кромок уходят внутрь
+function growRoadTree(rnd, out, s, lat, w, len) {
+  const edge = halfR - 0.35, step = 1.5;
+  const stack = [[s, lat, 0, w, 0, len, 0, rnd() < 0.5 ? 1 : -1, 0.07]];
+  while (stack.length) {
+    let [s0, l0, a, w0, d0, left, depth, alt, yStart] = stack.pop();
+    const lift = liftFn(rnd, FLOOR_LIFT.road, d0, yStart);
+    const wBase = w0, wob = rnd() * 6.28, pts = [[...roadPoint(s0, l0), w0, d0, yStart]];
+    let walked = 0, nextBranch = 3 + rnd() * 4;
+    while (walked < left) {
+      a += Math.sin(wob + d0 * 0.08) * 0.02 + (rnd() - 0.5) * 0.04;   // мягкая волна
+      a *= depth ? 0.94 : 0.9;                                          // тянется вдоль дороги
+      if (l0 > edge - 1.2) a -= 0.08;                                   // у кромок — внутрь
+      if (l0 < -edge + 1.2) a += 0.08;
+      s0 += Math.cos(a) * step;
+      l0 = Math.max(-edge, Math.min(edge, l0 + Math.sin(a) * step));
+      d0 += step; walked += step;
+      w0 = wBase * (1 - 0.5 * walked / left);
+      pts.push([...roadPoint(s0, l0), w0, d0, lift(d0)]);
+      if (depth < 3 && walked >= nextBranch && walked < left * 0.85 && rnd() < BRANCH_P.road * 4) {
+        alt = -alt;
+        stack.push([s0, l0, a + alt * (0.35 + rnd() * 0.25), w0 * 0.62, d0,
+          (left - walked) * (0.45 + rnd() * 0.25), depth + 1, alt, lift(d0)]);
+        nextBranch = walked + (depth ? 5 : 4) + rnd() * 5;
+      }
+    }
+    // ствол заострён с обоих концов; ветви у развилки сохраняют толщину, острые только на кончике
+    emitRibbon(out, pts, depth ? 3 : 5, depth ? 0.4 : 5);
+  }
+}
+// отрезки (A,B) -> полоски из 4 вершин: у каждой — своя точка, другая точка, сторона и "конец ли"
+function fatLineObject(data, mat) {
+  const n = data.pos.length / 6;
+  const pos = new Float32Array(n * 12), oth = new Float32Array(n * 12), dist = new Float32Array(n * 4);
+  const odist = new Float32Array(n * 4), side = new Float32Array(n * 4), end = new Float32Array(n * 4);
+  const root = new Float32Array(n * 8), taper = new Float32Array(n * 4), idx = new Uint32Array(n * 6);
+  for (let i = 0; i < n; i++) {
+    const A = data.pos.slice(i * 6, i * 6 + 3), B = data.pos.slice(i * 6 + 3, i * 6 + 6);
+    const dA = data.dist[i * 2], dB = data.dist[i * 2 + 1];
+    const tA = data.taper[i * 2], tB = data.taper[i * 2 + 1];
+    const verts = [[A, B, dA, dB, -1, 0, tA], [A, B, dA, dB, 1, 0, tA], [B, A, dB, dA, -1, 1, tB], [B, A, dB, dA, 1, 1, tB]];
+    verts.forEach(([self, other, ds, dO, sd, e, tp], j) => {
+      const v = i * 4 + j;
+      pos.set(self, v * 3); oth.set(other, v * 3);
+      dist[v] = ds; odist[v] = dO; side[v] = sd; end[v] = e; taper[v] = tp;
+      root[v * 2] = data.root[i * 2]; root[v * 2 + 1] = data.root[i * 2 + 1];
+    });
+    idx.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 1, i * 4 + 3, i * 4 + 2], i * 6);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('aOther', new THREE.BufferAttribute(oth, 3));
+  g.setAttribute('aDist', new THREE.BufferAttribute(dist, 1));
+  g.setAttribute('aOtherDist', new THREE.BufferAttribute(odist, 1));
+  g.setAttribute('aSide', new THREE.BufferAttribute(side, 1));
+  g.setAttribute('aEnd', new THREE.BufferAttribute(end, 1));
+  g.setAttribute('aRoot', new THREE.BufferAttribute(root, 2));
+  g.setAttribute('aTaper', new THREE.BufferAttribute(taper, 1));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  const o = new THREE.Mesh(g, mat);
+  o.frustumCulled = false;                           // вершины сдвигаются в шейдере
+  o.layers.set(REVEAL_LAYER);
+  return o;
+}
+// Гравий режима U — по всему полу вокруг камеры. Один "ковёр" GRAVEL_TILE×GRAVEL_TILE м с фиксированным
+// узором; вокруг камеры — сетка 4×4 таких ковров, привязанных к миру (камешки лежат на месте,
+// переставляется только сетка при переходе камеры в соседнюю клетку). Мелкий повтор узора незаметен.
+const GRAVEL_DENSITY = 5, GRAVEL_TILE = 30;
+const gravelTileGeo = (() => {
+  const rnd = seededRandom(424242), n = Math.round(GRAVEL_TILE * GRAVEL_TILE * GRAVEL_DENSITY);
+  const pos = new Float32Array(n * 12), idx = new Uint32Array(n * 6);
+  for (let k = 0; k < n; k++) {
+    const x = rnd() * GRAVEL_TILE, z = rnd() * GRAVEL_TILE, r = 0.025 + rnd() * 0.045, rot = rnd() * 6.28;
+    for (let v = 0; v < 4; v++) {
+      const a = rot + v * 1.5708 + (rnd() - 0.5) * 0.7, rr = r * (0.6 + rnd() * 0.7);
+      pos.set([x + Math.cos(a) * rr, 0.06, z + Math.sin(a) * rr], (k * 4 + v) * 3);
+    }
+    idx.set([k * 4, k * 4 + 1, k * 4 + 2, k * 4, k * 4 + 2, k * 4 + 3], k * 6);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeBoundingSphere();
+  return g;
+})();
+const gravelTiles = [];
+for (let i = 0; i < 16; i++) {
+  const m = new THREE.Mesh(gravelTileGeo, GRAVEL_MAT);
+  m.layers.set(REVEAL_LAYER);
+  gravelTiles.push(m); gravelRoot.add(m);
+}
+function updateGravel() {
+  const cx = Math.floor(camera.position.x / GRAVEL_TILE), cz = Math.floor(camera.position.z / GRAVEL_TILE);
+  gravelTiles.forEach((m, i) => m.position.set((cx - 2 + (i % 4)) * GRAVEL_TILE, 0, (cz - 2 + (i >> 2)) * GRAVEL_TILE));
+}
+function revealObject(Ctor, data, mat) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(data.pos, 3));
+  g.setAttribute('aDist', new THREE.Float32BufferAttribute(data.dist, 1));
+  const o = new Ctor(g, mat);
+  o.layers.set(REVEAL_LAYER);
+  return o;
+}
+function buildVeinChunk(c) {
+  const rnd = seededRandom(c * 9973 + 17);
+  const ground = { pos: [], dist: [] }, road = { pos: [], dist: [] };
+  const sky = { pos: [], dist: [], root: [], taper: [] }, vines = { pos: [], dist: [], root: [], taper: [] };
+  // на асфальте: дерево вдоль трассы (по ходу движения) примерно каждые 45 м
+  for (let i = c * VEIN_CHUNK + (rnd() * 6 | 0); i < Math.min(SEG, (c + 1) * VEIN_CHUNK); i += 9 + (rnd() * 5 | 0)) {
+    growRoadTree(rnd, road, i * FRAME_STEP, (rnd() - 0.5) * 5, 0.35 + rnd() * 0.15, 45 + rnd() * 40);
+  }
+  // от обочин — наружу (иногда вдоль дороги), в среднем каждые ~10 м
+  for (let i = c * VEIN_CHUNK; i < Math.min(SEG, (c + 1) * VEIN_CHUNK); i += 2 + ((rnd() * 2) | 0)) {
+    const f = frames[i];
+    for (const sd of [-1, 1]) {
+      if (rnd() < 0.35) continue;
+      const off = sd * (halfS + 0.5 + rnd() * 1.5);
+      const out = Math.atan2(f.side.z * sd, f.side.x * sd) + (rnd() - 0.5) * 1.4;
+      growGround(rnd, ground, f.p.x + f.side.x * off, f.p.z + f.side.z * off, out, 0.5 + rnd() * 0.6, 16 + (rnd() * 16 | 0), f);
+    }
+  }
+  // опоры куска: корни от основания + жилы в небо от рожков и концов траверсы
+  const pos = V3(0, 0, 0);
+  for (const [T, fi] of towersByChunk.get(c) || []) {
+    pos.setFromMatrixPosition(T);
+    for (let r = 0; r < 7; r++) {
+      const a = (r / 7) * Math.PI * 2 + rnd() * 0.6;
+      growGround(rnd, ground, pos.x + Math.cos(a) * 4, pos.z + Math.sin(a) * 4, a, 1.1 + rnd() * 0.5, 30 + (rnd() * 15 | 0), frames[fi]);
+    }
+    for (const src of [V3(-8, TW_TOP, 0), V3(8, TW_TOP, 0), V3(-11, TW_ARM, 0), V3(11, TW_ARM, 0)]) {
+      const w = src.clone().applyMatrix4(T);
+      const outDir = V3(w.x - pos.x, 0, w.z - pos.z).normalize().multiplyScalar(0.6).add(V3(0, 0.9, 0)).normalize();
+      growSky(rnd, sky, w, outDir, 0, Math.round((26 + rnd() * 14) * SKY_REACH), [pos.x, pos.z]);
+    }
+    // лианы: на 2–3 ногах из четырёх
+    const legs = [[-1, -1], [1, -1], [1, 1], [-1, 1]].filter(() => rnd() < 0.65);
+    for (const [sx, sz] of legs.length ? legs : [[1, 1]]) growVine(rnd, vines, T, sx, sz, [pos.x, pos.z]);
+  }
+  const chunk = {
+    ground: revealObject(THREE.Mesh, ground, VEIN_GROUND_MAT),
+    road: revealObject(THREE.Mesh, road, VEIN_ROAD_MAT),
+    sky: fatLineObject(sky, VEIN_SKY_MAT),
+    vines: fatLineObject(vines, VINE_MAT),
+  };
+  veinGroundRoot.add(chunk.ground);
+  roadVeinRoot.add(chunk.road);
+  veinSkyRoot.add(chunk.sky);
+  vineRoot.add(chunk.vines);
+  return chunk;
+}
+indexTowers();
+let veinFrame = 0;                        // ближайший кадр трассы к автобусу (ищем рядом с прошлым)
+function updateVeinChunks() {
+  let best = Infinity, bi = veinFrame;
+  for (let d = -40; d <= 80; d++) {
+    const i = ((veinFrame + d) % SEG + SEG) % SEG, p = frames[i].p;
+    const dd = (p.x - car.x) ** 2 + (p.z - car.z) ** 2;
+    if (dd < best) { best = dd; bi = i; }
+  }
+  if (best > 60 * 60) bi = nearestFrameIdx(car.x, car.z);   // уехал далеко от дороги — ищем по всей
+  veinFrame = bi;
+  const cb = Math.floor(bi / VEIN_CHUNK), need = new Set();
+  for (let d = -VEIN_KEEP_BEHIND; d <= VEIN_KEEP_AHEAD; d++) need.add(((cb + d) % VEIN_CHUNKS + VEIN_CHUNKS) % VEIN_CHUNKS);
+  for (const [c, ch] of veinChunks) if (!need.has(c)) {
+    for (const o of [ch.ground, ch.road, ch.sky, ch.vines]) { o.parent.remove(o); o.geometry.dispose(); }
+    veinChunks.delete(c);
+  }
+  for (const c of need) if (!veinChunks.has(c)) veinChunks.set(c, buildVeinChunk(c));
+}
+
+// автобус в режиме U: каркас как в Y, но проход U обрабатывает его как нереальное
+const busLookU = () => 'xrayUnreal';
+function applyReveal(on) {
+  // всё, что обнажают режимы Y/U, включено всегда
+  veinGroundRoot.visible = roadVeinRoot.visible = veinSkyRoot.visible = vineRoot.visible = on;
+  gravelRoot.visible = on && xrayMode === 'U';        // гравий — только в режиме U
+  pulseWires.visible = on;
+  const u = on && xrayMode === 'U', look = busLookU();
+  const lookU = look === 'xrayUnreal' ? 'xray' : look;
+  bus.userData.setLook(!on ? 'normal' : !u ? 'xray' : (lookU === 'xray' || lookU === 'invert') ? lookU : 'normal');   // Y — каркас
+  // U + "эффект U": автобус рисуется ещё и в слое нереального — проход U обрабатывает его как нереальное
+  const inReveal = u && (look === 'ueffect' || look === 'xrayUnreal');
+  bus.traverse(o => { if (o.isMesh) { if (inReveal) o.layers.enable(REVEAL_LAYER); else o.layers.disable(REVEAL_LAYER); } });
+  // в проходе глубины чёткого слоя: в Y прячем корпус-призрак (иначе закроет каркас);
+  // в U корпус непрозрачный и должен закрывать гравий/жилы; "как к нереальному" — автобус рисуется в самом слое
+  revealHideForDepth = inReveal ? [bus] : (!u || look === 'xray') ? [bus.userData.hull] : [];
+  // саунд-система в U — как автобус: в слое нереального (эффект U как к нереальному)
+  if (soundRoot) {
+    soundRoot.traverse(o => { if (o.isMesh) { if (u) o.layers.enable(REVEAL_LAYER); else o.layers.disable(REVEAL_LAYER); } });
+    if (u) revealHideForDepth.push(soundRoot);     // не закрывать саму себя в проходе глубины
+  }
+}
+
+// Y: мир в "синьку" + автобус на просвет
+function applyWorldXray(on) {
+  const walk = (o) => {
+    if (o.userData.xrSkip) return;
+    if (o.userData.xrHide) o.visible = !on;
+    if (o.isMesh || o.isLine || (o.isSprite && o.userData.xr)) {
+      if (on) { if (!o.userData.origMat) o.userData.origMat = o.material; o.material = o.userData.xr || (o.isLine ? XR_WHITE_LINE : XR_WHITE); }
+      else if (o.userData.origMat) o.material = o.userData.origMat;
+    }
+    o.children.forEach(walk);
+  };
+  walk(scene);
+  worldXray = on;
+  scene.background.setHex(on ? XR_BLUE.sky : HAZE);
+  scene.fog.color.setHex(on ? XR_BLUE.sky : HAZE);
+  sky.visible = !on;
+  flareCanvas.style.visibility = on ? 'hidden' : '';
+  applyReveal(on);
+}
+// режимы "обнажения": Y и U (пока U — копия Y; различия добавятся в applyWorldXray по xrayMode)
+const XRAY_KEYS = { KeyY: 'Y', KeyU: 'U' };
+function setXray(on, mode = null) {
+  if (on && xrayMode === mode) return;
+  if (!on && xrayMode === null) return;
+  if (on && xrayMode) applyWorldXray(false);   // переключение Y <-> U на лету
+  xrayMode = on ? mode : null;
+  document.getElementById('view').classList.toggle('xray', on);
+  applyWorldXray(on);
+}
+const keys = {};
+addEventListener('keydown', e => {
+  if (!e.repeat && musicKeys(e)) return;   // пауза — не перезапускать музыку
+  startMusic();
+  if (e.code === 'KeyO' && !e.repeat) { autopilot.on = !autopilot.on; if (autopilot.on) autopilotResync(); }
+  if (XRAY_KEYS[e.code] && !e.repeat) setXray(true, XRAY_KEYS[e.code]);        // режим, пока держишь Y или U
+  keys[e.code] = true; if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
+addEventListener('keyup', e => {
+  keys[e.code] = false;
+  if (XRAY_KEYS[e.code] === xrayMode) setXray(false);   // отпустил клавишу активного режима
+});
+// Автосброса режима при потере фокуса окна нет: режим держится до отпускания Y/U
+// (если отпустил в другом окне и режим "залип" — нажми и отпусти клавишу ещё раз).
+const k = (...codes) => codes.some(c => keys[c]);
+
+// Телефон: две невидимые кнопки — левая и правая половины экрана, обе — "газ".
+// Обе зажаты — вперёд прямо; только левая — поворот налево на полгаза; только правая — направо.
+const touches = new Map();                            // pointerId -> 'L' | 'R'
+const touchSide = e => (e.clientX < innerWidth / 2 ? 'L' : 'R');
+addEventListener('pointerdown', e => { touches.set(e.pointerId, touchSide(e)); e.preventDefault(); }, { passive: false });
+addEventListener('pointermove', e => { if (touches.has(e.pointerId)) touches.set(e.pointerId, touchSide(e)); });
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) addEventListener(ev, e => touches.delete(e.pointerId));
+addEventListener('contextmenu', e => e.preventDefault());
+const touchState = () => { let L = false, R = false; for (const s of touches.values()) { if (s === 'L') L = true; else R = true; } return { L, R }; };
+const TOUCH_TURN_GAS = 0.5;                           // газ при повороте одной половиной
+
+// ---------- Автопилот (O) ----------
+// Держит свою полосу через "погоню за точкой" впереди, как живой водитель:
+// на прямых — центр полосы с едва заметным дрейфом, в поворотах срезает внутрь
+// (в левых — на осевую, в правых — на краевую), то сильнее, то слабее.
+// Нажатые клавиши руля/газа перебивают автопилот, пока их держишь.
+const AUTO_SPEED = 125 / 3.6;            // м/с — на прямых мчит
+const AUTO_SPEED_TURN = 80 / 3.6;       // м/с — в поворотах
+const BRAKE_LOOK = 250;                  // м — насколько заранее видит поворот для сброса скорости
+const LANE_OFFSET = ROAD_WIDTH / 4;      // центр правой полосы от оси дороги
+const STRAIGHT_DRIFT = 0.15;             // м — дрейф на прямых
+const CORNER_CUT = 1.7;                  // м — максимальный срез в повороте (1.25 = касание линии)
+const CUT_FULL_K = 0.0012;               // 1/м — кривизна, при которой срез полный (основные повороты R=840)
+const autopilot = { on: false, idx: 0, t: 0 };
+const FRAME_STEP = TRACK_LEN / SEG;
+
+// кривизна трассы по кадрам (+ = влево), сглаженная окном ~80 м
+const trackCurv = (() => {
+  const th = frames.slice(0, SEG).map(f => Math.atan2(f.side.z, -f.side.x));   // угол касательной
+  const raw = th.map((a, i) => {
+    let d = th[(i + 1) % SEG] - a;
+    d = Math.atan2(Math.sin(d), Math.cos(d));
+    return d / FRAME_STEP;
+  });
+  const W = 20;
+  return raw.map((_, i) => {
+    let s = 0;
+    for (let j = -W; j <= W; j++) s += raw[(i + j + SEG) % SEG];
+    return s / (2 * W + 1);
+  });
+})();
+
+// при включении — ближайшая точка по всей трассе (автобус мог уехать куда угодно)
+function autopilotResync() {
+  let best = Infinity;
+  frames.forEach(({ p }, i) => {
+    const dd = (p.x - car.x) ** 2 + (p.z - car.z) ** 2;
+    if (i < SEG && dd < best) { best = dd; autopilot.idx = i; }
+  });
+}
+
+function autopilotInput(dt) {
+  autopilot.t += dt;
+  // ближайший кадр трассы: ищем рядом с прошлым
+  let best = Infinity, bi = autopilot.idx;
+  for (let d = -25; d <= 60; d++) {
+    const i = (((autopilot.idx + d) % SEG) + SEG) % SEG, p = frames[i].p;
+    const dd = (p.x - car.x) ** 2 + (p.z - car.z) ** 2;
+    if (dd < best) { best = dd; bi = i; }
+  }
+  autopilot.idx = bi;
+  // точка впереди в своей полосе
+  const t = autopilot.t;
+  const look = 14 + 0.8 * Math.abs(car.speed);
+  const ahead = Math.round(look / FRAME_STEP);
+  const f = frames[(bi + ahead) % SEG];
+  // на прямой — лёгкий дрейф; в повороте — срез внутрь, заранее (смотрим кривизну дальше точки цели)
+  const drift = STRAIGHT_DRIFT * (0.6 * Math.sin(t * 0.11) + 0.4 * Math.sin(t * 0.29 + 2.3));
+  const kAhead = trackCurv[(bi + ahead + Math.round(20 / FRAME_STEP)) % SEG];
+  const cutAmount = Math.min(1, Math.abs(kAhead) / CUT_FULL_K);
+  const cutMood = 0.65 + 0.35 * Math.sin(t * 0.23 + 0.8);      // то срезает сильнее, то аккуратнее
+  const cut = -Math.sign(kAhead) * CORNER_CUT * cutAmount * cutMood;   // влево = к оси (меньше offset)
+  const off = LANE_OFFSET + drift + cut;
+  const tx = f.p.x + f.side.x * off - car.x, tz = f.p.z + f.side.z * off - car.z;
+  const c = Math.cos(car.heading), s = Math.sin(car.heading);
+  const lat = -(tx * c - tz * s);                        // смещение цели влево от автобуса
+  const steer = Math.atan(2 * WHEELBASE * lat / (tx * tx + tz * tz));
+  // скорость: сбрасывает заранее, если в ближайших BRAKE_LOOK метрах есть поворот
+  let kMax = 0;
+  for (let j = 0; j < BRAKE_LOOK / FRAME_STEP; j += 2) kMax = Math.max(kMax, Math.abs(trackCurv[(bi + j) % SEG]));
+  const turnF = Math.min(1, kMax / CUT_FULL_K);
+  const dv = AUTO_SPEED + (AUTO_SPEED_TURN - AUTO_SPEED) * turnF - car.speed;
+  return { steer, gas: Math.min(1, Math.max(0, dv * 0.4)), brake: dv < -1 ? Math.min(0.35, -dv * 0.08) : 0 };   // мягко, ~5 м/с² максимум
+}
+
+
+// ---------- Физика ----------
+function update(dt) {
+  const t2 = touchState();
+  const up = k('KeyW', 'ArrowUp') || (t2.L && t2.R), down = k('KeyS', 'ArrowDown');
+  const left = k('KeyA', 'ArrowLeft') || (t2.L && !t2.R), right = k('KeyD', 'ArrowRight') || (t2.R && !t2.L);
+  const touchTurn = (t2.L !== t2.R);                   // одна половина — поворот на полгаза
+  const hand = k('Space');
+  const ap = autopilot.on ? autopilotInput(dt) : null;
+  const manualPedals = up || down || touchTurn, manualSteer = left || right;
+
+  // педали нажимаются не мгновенно; тяга дизеля падает с ростом скорости
+  const pedal = (v, to, press, release) => v + Math.max(-release * dt, Math.min(press * dt, to - v));
+  const gasTo = ap && !manualPedals ? ap.gas : up ? 1 : touchTurn ? TOUCH_TURN_GAS : 0;
+  const brakeTo = ap && !manualPedals ? ap.brake : down ? 1 : 0;
+  car.gas = pedal(car.gas, gasTo, GAS_PRESS, GAS_RELEASE);
+  car.brake = pedal(car.brake, brakeTo, BRAKE_PRESS, GAS_RELEASE);
+
+  const prevSpeed = car.speed;
+  const torque = 1 - 0.6 * Math.max(0, car.speed) / MAX_SPEED;
+  car.speed += (car.speed < 0 ? BRAKE : ACCEL * torque) * car.gas * dt;
+  car.speed -= (car.speed > 0 ? BRAKE : ACCEL * 0.6) * car.brake * dt;
+
+  const drag = (!gasTo && !brakeTo ? DRAG : 0) + (hand ? HAND_DRAG : 0);
+  if (drag) {
+    const s = Math.sign(car.speed);
+    car.speed -= s * Math.min(Math.abs(car.speed), drag * dt);
+  }
+  car.speed = Math.max(-MAX_REVERSE, Math.min(MAX_SPEED, car.speed));
+
+  // руль: колёса поворачиваются с постоянной (медленной) скоростью; на скорости угол меньше
+  const target = (left ? 1 : 0) - (right ? 1 : 0);
+  const steerLimit = MAX_STEER * (1 - 0.85 * Math.min(1, Math.abs(car.speed) / MAX_SPEED));
+  const auto = ap && !manualSteer;
+  const want = auto ? Math.max(-steerLimit, Math.min(steerLimit, ap.steer)) : target * steerLimit;
+  const rate = target || auto ? STEER_RATE : STEER_RETURN;
+  car.steer += Math.max(-rate * dt, Math.min(rate * dt, want - car.steer));
+
+  // велосипедная модель + инерция кузова по курсу
+  const yawTarget = (car.speed / WHEELBASE) * Math.tan(car.steer);
+  car.yawRate += (yawTarget - car.yawRate) * (1 - Math.exp(-dt / YAW_LAG));
+  car.heading += car.yawRate * dt;
+  car.x -= Math.sin(car.heading) * car.speed * dt;
+  car.z -= Math.cos(car.heading) * car.speed * dt;
+
+  // крен от поворота (наружу) и клевок от разгона/торможения — сглаженно, кузов тяжёлый
+  const a = dt > 0 ? (car.speed - prevSpeed) / dt : 0;
+  const sm = 1 - Math.exp(-dt / 0.3);
+  car.accel += (a - car.accel) * sm;
+  car.roll += (-0.008 * car.speed * car.yawRate - car.roll) * sm;
+  car.pitch += (0.0015 * car.accel - car.pitch) * sm;
+
+  const m = musicPose(music.currentTime + AUDIO_LOOKAHEAD);
+  const body = bus.userData.body;
+  body.position.y = m.y;
+  body.rotation.set(car.pitch + m.pitch, 0, car.roll + m.roll);
+
+  bus.position.set(car.x, 0, car.z);
+  bus.rotation.y = car.heading;
+  for (const w of bus.userData.frontWheels) w.rotation.y = car.steer;
+  updateSkids(hand && Math.abs(car.speed) > 1);
+  updatePassenger(dt, performance.now() / 1000);
+  for (const f of airportAnim) f(performance.now() / 1000);
+}
+
+// ---------- Камера сверху-сзади ----------
+// Ракурс низкий (снизу вверх — вышки кажутся выше): 44% пути от прежнего обычного к полному низкому.
+// Широкий объектив 200% (+30° к базовому углу → 90°).
+// Дистанция 79%: между прежней (100%) и вплотную к корме (0%).
+const CAM_NORMAL = { back: 14, up: 7, ahead: 8, lookY: 1.5 };
+const CAM_LOW_FULL = { back: 12, up: 3.2, ahead: 30, lookY: 8.5 };
+const LOW_AMOUNT = 0.44, WIDE_AMOUNT = 2.0, DIST_AMOUNT = 0.79;
+const CAM_BACK_CLOSE = BUS_L / 2 + 1;    // "вплотную" — метр за задним бампером
+const camCfg = Object.fromEntries(Object.keys(CAM_NORMAL).map(k =>
+  [k, CAM_NORMAL[k] + (CAM_LOW_FULL[k] - CAM_NORMAL[k]) * LOW_AMOUNT]));
+camCfg.back = CAM_BACK_CLOSE + (camCfg.back - CAM_BACK_CLOSE) * DIST_AMOUNT;
+camera.fov = CAM_FOV + 15 * WIDE_AMOUNT;
+camera.updateProjectionMatrix();
+
+// Дистанция до автобуса всегда фиксирована; плавно догоняет только угол камеры.
+const camPos = new THREE.Vector3(), camLook = new THREE.Vector3();
+let camYaw = car.heading;
+function updateCamera(dt, snap) {
+  let d = car.heading - camYaw;
+  d = Math.atan2(Math.sin(d), Math.cos(d));              // кратчайший угол
+  camYaw += snap ? d : d * (1 - Math.exp(-4 * dt));
+  const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw);
+  const { back, up, ahead, lookY } = camCfg;
+  camPos.set(car.x - fx * back, up, car.z - fz * back);
+  camLook.set(car.x + fx * ahead, lookY, car.z + fz * ahead);
+  camera.position.copy(camPos);
+  camera.lookAt(camLook);
+  sky.position.copy(camPos);             // небо всегда "на бесконечности"
+  hills.position.set(camPos.x, 0, camPos.z);
+  placeSun(camPos);
+}
+
+// ---------- Контр-блики ----------
+// Когда камера разворачивается к солнцу: общая засветка, ореол, горизонтальный луч
+// и "призраки" объектива на линии солнце -> центр кадра (и дальше за центр).
+const FAR_GHOST_ALPHA = 0.7;             // прозрачнее только призраки за центром кадра (4–6); 1 — как остальные
+const GHOSTS = [   // [позиция на линии (0 — солнце, 1 — центр), радиус px, цвет, яркость, кольцо?]
+  [0.35, 5, '255,220,120', 0.35], [0.6, 10, '255,120,90', 0.18], [0.85, 3, '255,255,200', 0.4],
+  [1.25, 16, '190,120,255', 0.14], [1.5, 7, '120,255,180', 0.2], [1.9, 26, '255,150,80', 0.12, true],
+];
+const _sunNdc = new THREE.Vector3(), _view = new THREE.Vector3(), _toSun = new THREE.Vector3();
+const _ray = new THREE.Raycaster(), _camLocal = new THREE.Vector3();
+let flareVis = 1;                                    // 0..1: плавное гашение, когда солнце закрыто ангаром
+function sunBlocked() {
+  if (!airportGroup) return false;
+  _camLocal.copy(camera.position); airportGroup.worldToLocal(_camLocal);
+  const { u, v, R, HL } = HANGAR, cv = -_camLocal.z;
+  if (Math.abs(_camLocal.x - u) < HL / 2 + 1 && Math.hypot(cv - v, _camLocal.y) < R + 1) return true;   // камера внутри ангара
+  _ray.set(camera.position, _toSun.copy(sunGroup.position).sub(camera.position).normalize());
+  _ray.far = 400;
+  return _ray.intersectObjects(hangarBlockers, false).length > 0;              // стены между камерой и солнцем
+}
+// блайндеры на экране: тёплое сияние вокруг каждого + лёгкая засветка кадра, когда смотрят "в лицо".
+// Без призраков и лучей. Стены ангара закрывают (сквозь проём ворот — видно).
+const _bp = new THREE.Vector3(), _bf = new THREE.Vector3(), _bc = new THREE.Vector3(), _bn = new THREE.Vector3();
+function drawBlinders() {
+  if (worldXray || !blinders.length) return;
+  const g = fx2d, W = RES_W, H = RES_H;
+  let veil = 0;
+  g.globalCompositeOperation = 'lighter';
+  for (const b of blinders) {
+    b.getWorldPosition(_bp); b.getWorldDirection(_bf);
+    _bc.copy(camera.position).sub(_bp);
+    const dist = _bc.length(), facing = Math.max(0, _bf.dot(_bc.normalize()));
+    let I = Math.pow(facing, 6) * Math.max(0, 1 - dist / 160);
+    if (I < 0.01) continue;
+    _ray.set(camera.position, _bn.copy(_bp).sub(camera.position).normalize());
+    _ray.far = dist - 1.5;
+    if (_ray.intersectObjects(hangarBlockers, false).length) continue;   // стена ангара закрывает
+    _sunNdc.copy(_bp).project(camera);
+    if (_sunNdc.z > 1 || Math.abs(_sunNdc.x) > 1.3 || Math.abs(_sunNdc.y) > 1.3) continue;
+    const [fu, fv] = fishForward((_sunNdc.x + 1) / 2, (1 - _sunNdc.y) / 2);
+    const x = fu * W, y = fv * H, r = 6.4 + 22 * I;                         // между компактным и прежним (40% назад)
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, `rgba(255,226,170,${0.66 * I})`); gr.addColorStop(0.44, `rgba(255,190,110,${0.27 * I})`);
+    gr.addColorStop(1, 'rgba(255,150,70,0)');
+    g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
+    veil += I;
+  }
+  if (veil > 0) { g.fillStyle = `rgba(255,185,110,${Math.min(0.17, 0.052 * veil)})`; g.fillRect(0, 0, W, H); }
+  g.globalCompositeOperation = 'source-over';
+}
+function drawFlare() {
+  const W = RES_W, H = RES_H, g = fx2d;
+  g.clearRect(0, 0, W, H);
+  camera.getWorldDirection(_view);
+  _toSun.copy(sunGroup.position).sub(camera.position).normalize();
+  const cosA = _view.dot(_toSun);
+  const lo = Math.cos(THREE.MathUtils.degToRad(32)), hi = Math.cos(THREE.MathUtils.degToRad(6));
+  let I = Math.min(1, Math.max(0, (cosA - lo) / (hi - lo)));
+  I = I * I * (3 - 2 * I);                                   // smoothstep
+  flareVis += ((sunBlocked() ? 0 : 1) - flareVis) * 0.15;
+  I *= flareVis;
+  if (I <= 0.01) return;
+
+  _sunNdc.copy(sunGroup.position).project(camera);
+  const [fu, fv] = fishForward((_sunNdc.x + 1) / 2, (1 - _sunNdc.y) / 2);   // с учётом фишая
+  const sx = Math.round(fu * W), sy = Math.round(fv * H);
+  g.globalCompositeOperation = 'lighter';
+
+  g.fillStyle = `rgba(255,140,80,${0.22 * I})`;              // засветка всего кадра
+  g.fillRect(0, 0, W, H);
+
+  const glow = g.createRadialGradient(sx, sy, 0, sx, sy, 110);
+  glow.addColorStop(0, `rgba(255,210,150,${0.7 * I})`); glow.addColorStop(1, 'rgba(255,120,60,0)');
+  g.fillStyle = glow; g.fillRect(0, 0, W, H);
+
+  const streak = g.createLinearGradient(sx - 220, 0, sx + 220, 0);   // анаморфный луч
+  streak.addColorStop(0, 'rgba(255,160,90,0)'); streak.addColorStop(0.5, `rgba(255,220,170,${0.3 * I})`);
+  streak.addColorStop(1, 'rgba(255,160,90,0)');
+  g.fillStyle = streak; g.fillRect(sx - 220, sy, 440, 1);
+
+  const vx = W / 2 - sx, vy = H / 2 - sy;
+  for (const [t, r, rgb, a0, ring] of GHOSTS) {
+    const a = t > 1 ? a0 * FAR_GHOST_ALPHA : a0;
+    const x = Math.round(sx + vx * t), y = Math.round(sy + vy * t);
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2);
+    if (ring) { g.strokeStyle = `rgba(${rgb},${a * I})`; g.lineWidth = 2; g.stroke(); }
+    else { g.fillStyle = `rgba(${rgb},${a * I})`; g.fill(); }
+  }
+  g.globalCompositeOperation = 'source-over';
+}
+
+// ---------- Птицы ----------
+// Изредка стайка пересекает небо впереди: силуэты машут крыльями и иногда планируют.
+const BIRD_EVERY = [15, 40];             // с — пауза между стайками (случайно в диапазоне)
+const BIRD_MAT = lambert({ color: 0x1e161c, side: THREE.DoubleSide, fog: false });   // силуэт не тонет в дымке
+const flocks = [];
+let nextFlock = 6;                       // первая стайка вскоре после старта
+
+function makeBird() {
+  const b = new THREE.Group();           // вперёд = +Z
+  const mesh = (geo) => {                // во время режима Y — сразу белая; оригинал запомнен для возврата
+    const m = new THREE.Mesh(geo, worldXray ? XR_WHITE : BIRD_MAT);
+    m.userData.origMat = BIRD_MAT;
+    return m;
+  };
+  b.add(mesh(new THREE.BoxGeometry(0.3, 0.2, 0.9)));
+  const wings = [];
+  for (const s of [-1, 1]) {
+    const pivot = new THREE.Group();
+    const w = mesh(new THREE.BoxGeometry(1.4, 0.06, 0.5));
+    w.position.x = s * 0.7;
+    pivot.add(w); b.add(pivot); wings.push([pivot, s]);
+  }
+  b.userData = { wings, phase: Math.random() * 6.28, glide: Math.random() * 6.28, off: null };
+  return b;
+}
+function spawnFlock() {
+  const n = 3 + ((Math.random() * 5) | 0), side = Math.random() < 0.5 ? -1 : 1;
+  const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw), rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
+  // далеко впереди (на 110 км/ч успеем увидеть) и сразу за краем кадра
+  const dist = 200 + Math.random() * 160, h = 25 + Math.random() * 35, speed = 10 + Math.random() * 5;
+  const halfW = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * RES_W / RES_H + 15;
+  const flock = new THREE.Group();
+  flock.position.set(camPos.x + fx * dist - rx * side * halfW, h, camPos.z + fz * dist - rz * side * halfW);
+  const vx = rx * side * speed + fx * (Math.random() - 0.5) * 4, vz = rz * side * speed + fz * (Math.random() - 0.5) * 4;
+  flock.rotation.y = Math.atan2(vx, vz);
+  for (let i = 0; i < n; i++) {                        // рыхлый клин
+    const b = makeBird(), row = Math.ceil(i / 2), s = i % 2 ? 1 : -1;
+    b.userData.off = V3(s * row * (2.5 + Math.random() * 2), (Math.random() - 0.5) * 2, -row * (2.5 + Math.random() * 2));
+    b.scale.setScalar(1.3 + Math.random() * 0.4);
+    flock.add(b);
+  }
+  flocks.push({ g: flock, vx, vz, age: 0 });
+  scene.add(flock);
+}
+function updateBirds(dt, time) {
+  if ((nextFlock -= dt * (xrayMode === 'U' ? 2 : 1)) <= 0) {   // в режиме U стайки вдвое чаще
+    spawnFlock();
+    nextFlock = BIRD_EVERY[0] + Math.random() * (BIRD_EVERY[1] - BIRD_EVERY[0]);
+  }
+  for (let i = flocks.length - 1; i >= 0; i--) {
+    const f = flocks[i];
+    f.age += dt;
+    f.g.position.x += f.vx * dt; f.g.position.z += f.vz * dt;
+    for (const b of f.g.children) {
+      const u = b.userData;
+      const gliding = Math.sin(time * 0.6 + u.glide) > 0.55;      // иногда планирует
+      const flap = gliding ? 0.12 : 0.15 + 0.55 * Math.sin(time * 9 + u.phase);
+      for (const [pivot, s] of u.wings) pivot.rotation.z = s * flap;
+      b.position.copy(u.off).setY(u.off.y + Math.sin(time * 1.3 + u.phase) * 0.4);
+    }
+    if (f.age > 45) { scene.remove(f.g); flocks.splice(i, 1); }
+  }
+}
+
+// ---------- Цикл ----------
+let last = performance.now();
+updateCamera(0, true);
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt);
+  updateCamera(dt, false);
+  updateBirds(dt, now / 1000);
+  const t = now / 1000;
+  for (const m of [VEIN_GROUND_MAT, VEIN_ROAD_MAT, VEIN_SKY_MAT, VINE_MAT, WIRE_PULSE_MAT]) m.uniforms.uTime.value = t % 1000;
+  uMat.uniforms.uTime.value = t % 1000;
+  updateVeinChunks();
+  if (soundSpeakers) {                     // саунд-система подпрыгивает под бочку — на ту же высоту, что автобус
+    const mp = musicPose(music.currentTime + AUDIO_LOOKAHEAD);
+    soundSpeakers.position.y = PLINTH_H + mp.y / SOUND_SCALE;
+  }
+  if (xrayMode === 'U') updateGravel();
+  for (const m of [VEIN_SKY_MAT, VINE_MAT]) {
+    m.uniforms.uCam.value.copy(camera.position);
+    m.uniforms.uRes.value.set(hiRT.width, hiRT.height);
+  }
+  renderFrame();
+  drawFlare();
+  drawBlinders();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
