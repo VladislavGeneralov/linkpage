@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hand Track</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; color: #fff; font: 14px monospace; }
+  #wrap { position: relative; width: 100vw; height: 100vh; }
+  video { display: none; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  #info { position: absolute; top: 8px; left: 8px; white-space: pre; background: rgba(0,0,0,.6); padding: 6px 8px; }
+  @media (max-width: 600px) { #info { font-size: 10px; } }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="info">загрузка модели…</div>
+</div>
+
+<script type="module">
+import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const info = document.getElementById("info");
+
+// Индексы точек MediaPipe: 0 = запястье, дальше по 4 на палец (основание → кончик)
+const FINGERS = [
+  { name: "большой",   ids: [1, 2, 3, 4] },
+  { name: "указат.",   ids: [5, 6, 7, 8] },
+  { name: "средний",   ids: [9, 10, 11, 12] },
+  { name: "безымян.",  ids: [13, 14, 15, 16] },
+  { name: "мизинец",   ids: [17, 18, 19, 20] },
+];
+const TIP_COLORS = ["#ff4d4d", "#ffb84d", "#4dff88", "#4dc3ff", "#c34dff"];
+const PALM = [[0, 1], [0, 5], [5, 9], [9, 13], [13, 17], [0, 17]];
+
+const vision = await FilesetResolver.forVisionTasks(
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+);
+const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+const make = delegate => HandLandmarker.createFromOptions(vision, {
+  baseOptions: { modelAssetPath: MODEL, delegate },
+  runningMode: "VIDEO",
+  numHands: 2,
+});
+// На некоторых телефонах (iOS Safari) GPU-делегат не стартует — падаем на CPU
+let landmarker;
+try { landmarker = await make("GPU"); } catch { landmarker = await make("CPU"); }
+
+info.textContent = "запрос камеры…";
+video.srcObject = await navigator.mediaDevices.getUserMedia({
+  video: { width: 1280, height: 720, facingMode: "user" },
+  audio: false,
+});
+await video.play();
+canvas.width = video.videoWidth;
+canvas.height = video.videoHeight;
+
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+// Палец разогнут, если кончик дальше от запястья, чем средний сустав.
+// Для большого сравниваем с основанием указательного.
+function extended(lm, f, i) {
+  const [, pip, , tip] = f.ids;
+  const ref = i === 0 ? lm[5] : lm[0];
+  return dist(lm[tip], ref) > dist(lm[pip], ref) * (i === 0 ? 1.2 : 1.0);
+}
+
+let lastTime = -1, fps = 0, lastFrame = performance.now();
+
+function loop() {
+  if (video.currentTime !== lastTime) {
+    lastTime = video.currentTime;
+    const now = performance.now();
+    const res = landmarker.detectForVideo(video, now);
+    fps = fps * 0.9 + (1000 / (now - lastFrame)) * 0.1;
+    lastFrame = now;
+
+    const W = canvas.width, H = canvas.height;
+    // Зеркальное видео, координаты точек зеркалим вручную, чтобы текст не переворачивался
+    ctx.save();
+    ctx.translate(W, 0); ctx.scale(-1, 1);
+    ctx.drawImage(video, 0, 0, W, H);
+    ctx.restore();
+    const px = p => [(1 - p.x) * W, p.y * H];
+
+    let text = `fps ${fps.toFixed(0)}  рук: ${res.landmarks.length}\n`;
+
+    res.landmarks.forEach((lm, h) => {
+      const side = res.handedness[h][0].categoryName === "Left" ? "правая" : "левая";
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(255,255,255,.7)";
+      for (const [a, b] of PALM) {
+        ctx.beginPath(); ctx.moveTo(...px(lm[a])); ctx.lineTo(...px(lm[b])); ctx.stroke();
+      }
+      FINGERS.forEach((f, i) => {
+        ctx.strokeStyle = TIP_COLORS[i];
+        ctx.beginPath(); ctx.moveTo(...px(lm[f.ids[0]]));
+        for (const id of f.ids.slice(1)) ctx.lineTo(...px(lm[id]));
+        ctx.stroke();
+      });
+      for (const p of lm) {
+        ctx.fillStyle = "#fff";
+        ctx.beginPath(); ctx.arc(...px(p), 4, 0, Math.PI * 2); ctx.fill();
+      }
+
+      text += `\n${side}:\n`;
+      FINGERS.forEach((f, i) => {
+        const tip = lm[f.ids[3]];
+        const up = extended(lm, f, i);
+        ctx.fillStyle = TIP_COLORS[i];
+        ctx.beginPath(); ctx.arc(...px(tip), up ? 12 : 7, 0, Math.PI * 2); ctx.fill();
+        text += `  ${f.name.padEnd(9)} ${up ? "▲" : "·"}  x ${(1 - tip.x).toFixed(2)}  y ${tip.y.toFixed(2)}\n`;
+      });
+    });
+
+    info.textContent = text;
+  }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
