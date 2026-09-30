@@ -10,6 +10,7 @@
   video { display: none; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
   #info { position: absolute; top: 8px; left: 8px; white-space: pre; background: rgba(0,0,0,.6); padding: 6px 8px; }
+  #zero { position: absolute; right: 8px; bottom: 8px; font: 16px monospace; padding: 12px 18px; }
   @media (max-width: 600px) { #info { font-size: 10px; } }
 </style>
 </head>
@@ -18,6 +19,7 @@
   <video id="video" playsinline muted></video>
   <canvas id="canvas"></canvas>
   <div id="info">загрузка модели…</div>
+  <button id="zero">ноль</button>
 </div>
 
 <script type="module">
@@ -36,8 +38,10 @@ const FINGERS = [
   { name: "безымян.",  ids: [13, 14, 15, 16] },
   { name: "мизинец",   ids: [17, 18, 19, 20] },
 ];
-const TIP_COLORS = ["#ff4d4d", "#ffb84d", "#4dff88", "#4dc3ff", "#c34dff"];
 const PALM = [[0, 1], [0, 5], [5, 9], [9, 13], [13, 17], [0, 17]];
+
+const THRESHOLD = 10; // градусов от начального положения — с этого палец считается согнутым
+const FULL_BEND = 150; // градусов от начального положения — полный красный
 
 const vision = await FilesetResolver.forVisionTasks(
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
@@ -61,15 +65,35 @@ await video.play();
 canvas.width = video.videoWidth;
 canvas.height = video.videoHeight;
 
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
-
-// Палец разогнут, если кончик дальше от запястья, чем средний сустав.
-// Для большого сравниваем с основанием указательного.
-function extended(lm, f, i) {
-  const [, pip, , tip] = f.ids;
-  const ref = i === 0 ? lm[5] : lm[0];
-  return dist(lm[tip], ref) > dist(lm[pip], ref) * (i === 0 ? 1.2 : 1.0);
+// Угол в суставе b между отрезками a→b и b→c (0° = прямо)
+function jointAngle(a, b, c) {
+  const u = [b.x - a.x, b.y - a.y, b.z - a.z];
+  const v = [c.x - b.x, c.y - b.y, c.z - b.z];
+  const cos = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v));
+  return Math.acos(Math.max(-1, Math.min(1, cos))) * 180 / Math.PI;
 }
+
+// Сгиб пальца = сумма углов трёх суставов (от запястья до кончика), в 3D-координатах руки
+function bendAngle(wl, f) {
+  const chain = [0, ...f.ids];
+  let sum = 0;
+  for (let k = 1; k < 4; k++) sum += jointAngle(wl[chain[k - 1]], wl[chain[k]], wl[chain[k + 1]]);
+  return sum;
+}
+
+// Цвет по силе сгиба: ниже порога — белый, дальше от зелёного к красному
+function bendColor(delta) {
+  if (delta < THRESHOLD) return "rgba(255,255,255,.8)";
+  const t = Math.min(1, (delta - THRESHOLD) / (FULL_BEND - THRESHOLD));
+  return `hsl(${120 * (1 - t)}, 100%, 50%)`;
+}
+
+// Начальное положение: снимается автоматически при первом появлении руки, кнопкой «ноль» — заново
+const baseline = {}; // side -> [5 углов]
+const smooth = {};   // side -> [5 углов], сглаживание дрожания
+document.getElementById("zero").onclick = () => {
+  for (const side in smooth) baseline[side] = smooth[side].slice();
+};
 
 let lastTime = -1, fps = 0, lastFrame = performance.now();
 
@@ -88,35 +112,37 @@ function loop() {
     ctx.drawImage(video, 0, 0, W, H);
     ctx.restore();
     const px = p => [(1 - p.x) * W, p.y * H];
+    const line = (a, b) => { ctx.beginPath(); ctx.moveTo(...px(a)); ctx.lineTo(...px(b)); ctx.stroke(); };
 
     let text = `fps ${fps.toFixed(0)}  рук: ${res.landmarks.length}\n`;
 
     res.landmarks.forEach((lm, h) => {
       const side = res.handedness[h][0].categoryName === "Left" ? "правая" : "левая";
+      const wl = res.worldLandmarks[h];
 
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = "rgba(255,255,255,.7)";
-      for (const [a, b] of PALM) {
-        ctx.beginPath(); ctx.moveTo(...px(lm[a])); ctx.lineTo(...px(lm[b])); ctx.stroke();
-      }
+      const raw = FINGERS.map(f => bendAngle(wl, f));
+      smooth[side] = smooth[side] ? smooth[side].map((v, i) => v * 0.6 + raw[i] * 0.4) : raw;
+      if (!baseline[side]) baseline[side] = smooth[side].slice();
+      const deltas = smooth[side].map((v, i) => v - baseline[side][i]);
+
+      ctx.lineCap = "round";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "rgba(255,255,255,.5)";
+      for (const [a, b] of PALM) line(lm[a], lm[b]);
+
+      ctx.lineWidth = 8;
       FINGERS.forEach((f, i) => {
-        ctx.strokeStyle = TIP_COLORS[i];
-        ctx.beginPath(); ctx.moveTo(...px(lm[f.ids[0]]));
-        for (const id of f.ids.slice(1)) ctx.lineTo(...px(lm[id]));
-        ctx.stroke();
+        ctx.strokeStyle = bendColor(deltas[i]);
+        for (let k = 1; k < 4; k++) line(lm[f.ids[k - 1]], lm[f.ids[k]]);
       });
-      for (const p of lm) {
-        ctx.fillStyle = "#fff";
-        ctx.beginPath(); ctx.arc(...px(p), 4, 0, Math.PI * 2); ctx.fill();
-      }
 
-      text += `\n${side}:\n`;
+      ctx.fillStyle = "#fff";
+      for (const p of lm) { ctx.beginPath(); ctx.arc(...px(p), 4, 0, Math.PI * 2); ctx.fill(); }
+
+      text += `\n${side}:          угол    Δ\n`;
       FINGERS.forEach((f, i) => {
-        const tip = lm[f.ids[3]];
-        const up = extended(lm, f, i);
-        ctx.fillStyle = TIP_COLORS[i];
-        ctx.beginPath(); ctx.arc(...px(tip), up ? 12 : 7, 0, Math.PI * 2); ctx.fill();
-        text += `  ${f.name.padEnd(9)} ${up ? "▲" : "·"}  x ${(1 - tip.x).toFixed(2)}  y ${tip.y.toFixed(2)}\n`;
+        const bent = deltas[i] >= THRESHOLD;
+        text += `  ${f.name.padEnd(9)} ${bent ? "●" : "·"} ${smooth[side][i].toFixed(0).padStart(4)}° ${deltas[i].toFixed(0).padStart(4)}°\n`;
       });
     });
 
