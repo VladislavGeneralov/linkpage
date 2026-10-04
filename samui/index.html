@@ -34,6 +34,13 @@
     font: 11px/1.35 Consolas, 'Courier New', monospace; color: #9aa6b4; user-select: none; white-space: nowrap; }
   #fps[hidden] { display: none; }
   #fps b { display: block; font-weight: normal; color: #5f6b7a; margin: 0 0 3px; }
+  /* переключатель сенсорных ручек — крошечный, на поле страницы снизу слева */
+  #touchToggle { position: fixed; left: 8px; bottom: 8px; z-index: 5; display: flex; align-items: center; gap: 5px; cursor: pointer;
+    font: 10px/1 Consolas, 'Courier New', monospace; color: #5f6b7a; user-select: none; }
+  #touchToggle[hidden] { display: none; }
+  #touchToggle i { position: relative; width: 18px; height: 10px; border-radius: 5px; background: #26334a; transition: background 0.15s; }
+  #touchToggle i::after { content: ''; position: absolute; left: 1px; top: 1px; width: 8px; height: 8px; border-radius: 50%; background: #5f6b7a; transition: left 0.15s, background 0.15s; }
+  #touchToggle.on i { background: #3a5a3a; } #touchToggle.on i::after { left: 9px; background: #9ad89a; } #touchToggle.on { color: #9aa6b4; }
   /* надпись на время загрузки: видна, пока качаются данные и строится мир; убирается с первым кадром */
   #loading { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; pointer-events: none;
     font: 14px/1 Consolas, 'Courier New', monospace; letter-spacing: 3px; color: #9aa6b4; }
@@ -47,6 +54,7 @@
 </div>
 <audio id="music" src="track.mp3" preload="metadata"></audio>
 <div id="fps" hidden><b>FPS</b><span>–</span></div>
+<div id="touchToggle" hidden title="touch controls"><i></i>TOUCH</div>
 <div id="scMenu" hidden>
   <input id="scUrl" spellcheck="false" autocomplete="off">
   <input id="scCid" spellcheck="false" autocomplete="off">
@@ -2537,7 +2545,7 @@ function breakCheck() {
   for (let ax = cx - 1; ax <= cx + 1; ax++) for (let az = cz - 1; az <= cz + 1; az++) {
     const cell = breakCells.get(ax + ',' + az);
     if (!cell) continue;
-    for (const b of cell) {
+    for (const b of cell.slice()) {                                    // (копия: удар может снять предметы из этой же ячейки)
       if (!b.alive || b.seen === breakStamp) continue;
       b.seen = breakStamp;
       let d = Infinity;
@@ -2547,7 +2555,7 @@ function breakCheck() {
           d = Math.min(d, Math.hypot(P[i] - (x1 + wx * t), P[i + 1] - (z1 + wz * t)) - 0.06);
         } else d = Math.min(d, Math.hypot(P[i] - b.x, P[i + 1] - b.z) - b.r);
       }
-      if (d < HIT_R && fast && !b.solid) { if (b.bump) b.bump(); else smash(b); continue; }     // bump — стоящая машина или скутер: не ломается, а отлетает (vehicles.js);                  // solid — большое дерево: не ломается никогда
+      if (d < HIT_R && fast && Math.abs(car.speed) > BREAK_SPEED && !b.solid) { if (b.bump) b.bump(); else smash(b); continue; }   // (скорость — сейчас: после удара о стоящую машину следующая в этом шаге не бьётся)     // bump — стоящая машина или скутер: не ломается, а отлетает (vehicles.js);                  // solid — большое дерево: не ломается никогда
       if (!b.seg && d < 8) breakWalls.push([b.x - b.r, b.z, b.x + b.r, b.z], [b.x, b.z - b.r, b.x, b.z + b.r]);
     }
   }
@@ -4862,8 +4870,10 @@ const HIT_STEP = 0.5;                    // м — движение за кад�
 const RECOIL_AT_100 = 4, RECOIL_MAX = 7, RECOIL_GLANCE = 20, RECOIL_DECEL = 14, RECOIL_MIN_V = 1.5;
 // прямота удара c (1 — в лоб, 0 — вдоль) -> доля отката 0…1
 function recoilShare(c) { const g = Math.sin(RECOIL_GLANCE * Math.PI / 180), t = Math.max(0, Math.min(1, (c - g) / (1 - g))); return t * t * (3 - 2 * t); }
-// дальность отката, м: скорость сближения v (м/с, вдоль хода), прямота c
-function recoilDist(v, c) { return v < RECOIL_MIN_V ? 0 : Math.min(RECOIL_MAX, RECOIL_AT_100 * v / (100 / 3.6)) * recoilShare(c); }
+// дальность отката, м: скорость сближения v (м/с, вдоль хода), прямота c. Растёт как v^1.5: на 100 км/ч — RECOIL_AT_100,
+// а на малой скорости быстро сходит на нет — иначе, если держать газ в стену, машина отскакивает и снова разгоняется
+// в стену без конца (линейный откат даёт повторный удар с той же скоростью)
+function recoilDist(v, c) { return v < RECOIL_MIN_V ? 0 : Math.min(RECOIL_MAX, RECOIL_AT_100 * Math.pow(v / (100 / 3.6), 1.5)) * recoilShare(c); }
 // начать откат в сторону (nx, nz) на d м
 function carRecoil(nx, nz, d) {
   if (car.kick || d < 0.03) return;
@@ -4874,7 +4884,7 @@ function collide() {
   const fx = -Math.sin(car.heading), fz = -Math.cos(car.heading), dir = Math.sign(car.speed);
   let tx = -Math.sin(car.course) * dir, tz = -Math.cos(car.course) * dir;                               // куда машина движется
   const pts = [[car.x + fx * HIT_ZF, car.z + fz * HIT_ZF], [car.x - fx * HIT_ZR, car.z - fz * HIT_ZR]];   // перед, зад
-  let hit = false, kicked = false;
+  let hit = false, kicked = false, kickAlong = 0;
   // только стены рядом с машиной (с запасом: круг, вытолкнутый из одной стены, может зайти в соседнюю)
   const pad = HIT_R + 2, near = wallsNear(Math.min(pts[0][0], pts[1][0]) - pad, Math.min(pts[0][1], pts[1][1]) - pad, Math.max(pts[0][0], pts[1][0]) + pad, Math.max(pts[0][1], pts[1][1]) + pad);
   if (!near.length && !breakWalls.length) return;
@@ -4889,7 +4899,7 @@ function collide() {
     collideN = [nx, nz];
     if (vn < 0) {
       soundImpact(Math.abs(car.speed * vn));              // толчок или удар — по скорости сближения
-      if (!car.kick) { carRecoil(nx, nz, recoilDist(Math.abs(car.speed), -vn)); kicked = !!car.kick; }   // прямой удар — откат назад от стены (один раз за удар)
+      if (!car.kick) { carRecoil(nx, nz, recoilDist(Math.abs(car.speed), -vn)); kicked = !!car.kick; if (kicked) kickAlong = Math.sqrt(Math.max(0, 1 - vn * vn)); }   // прямой удар — откат назад от стены (один раз за удар); kickAlong — доля хода вдоль стены
       car.speed *= 1 - vn * vn;
       tx -= nx * vn; tz -= nz * vn;                      // дальше — вдоль стены
       const tl = Math.hypot(tx, tz);
@@ -4902,7 +4912,7 @@ function collide() {
   if (dir && (tx || tz)) car.course = Math.atan2(-tx * dir, -tz * dir);
   // отскочив, машина разворачивается вдоль стены: иначе сцепление снова тянет ход за носом в стену, и вместо отката
   // машина бьётся о стену раз за разом и встаёт (удар в лоб — хода вдоль стены нет, курс не меняется)
-  if (kicked && dir && Math.hypot(tx, tz) > 0.5) { car.heading = car.course; car.slip = 0; car.yawRate = 0; }
+  if (kicked && dir && kickAlong > 0.5) { car.heading = car.course; car.slip = 0; car.yawRate = 0; }   // (удар круче 60° к стене — без разворота)
   const nfx = -Math.sin(car.heading), nfz = -Math.cos(car.heading);   // центр — из новых положений кругов, с учётом разных выносов
   car.x = (pts[0][0] - nfx * HIT_ZF + pts[1][0] + nfx * HIT_ZR) / 2;
   car.z = (pts[0][1] - nfz * HIT_ZF + pts[1][1] + nfz * HIT_ZR) / 2;
@@ -5574,7 +5584,7 @@ const JUNCTION_PLACES = [];              // по одному стыку каж�
 }
 function teleport(p) {
   warp = null; autopilot.on = false;
-  Object.assign(car, { x: p.x, z: p.z, heading: p.heading, course: p.heading, slip: 0, spun: false, speed: 0, steer: 0, yawRate: 0, gas: 0, brake: 0, kick: null });
+  Object.assign(car, { x: p.x, z: p.z, heading: p.heading, course: p.heading, slip: 0, spun: false, speed: 0, steer: 0, yawRate: 0, gas: 0, brake: 0, kick: null, air: 0, vy: 0 });
   camYaw = p.heading; bananaPrev.x = null;
 }
 // Счётчик кадров — справа от игры, на таком же тёмном поле: среднее за полсекунды.
@@ -5587,6 +5597,7 @@ function fpsLayout() {
   const margin = (innerWidth - canvas.getBoundingClientRect().width) / 2;
   fpsBox.hidden = COARSE || margin < 40;                    // счётчик кадров — на правом поле, если оно есть (на телефоне — нет)
   fpsBox.style.fontSize = Math.max(9, Math.min(13, Math.floor(margin / 11))) + 'px';
+  const tt = document.getElementById('touchToggle'); if (tt) tt.hidden = margin < 34;      // переключатель ручек — на левом поле, если оно есть
 }
 addEventListener('resize', fpsLayout);
 // Кнопка телепортов — круглая, между мини-картой и спидометром, на ней метка-булавка (ui_icons/teleport_pin_white_flat.png,
@@ -5603,7 +5614,7 @@ function drawTeleBtn() {
   g.fillStyle = col;
   B.pin.forEach((row, y) => [...row].forEach((c, x) => { if (c === '#') g.fillRect(cx - 3 + x, cy - 5 + y, 1, 1); }));
 }
-addEventListener('pointerdown', (e) => { if (DEV_PLACES && !radio.menuOpen && !CAR_PICK.open && teleBtnHit(...clockAt(e))) teleToggle(); });
+addEventListener('pointerdown', (e) => { if (e.button === 0 && DEV_PLACES && !radio.menuOpen && !CAR_PICK.open && teleBtnHit(...clockAt(e))) teleToggle(); });
 addEventListener('pointermove', (e) => { TELE_BTN.hover = DEV_PLACES && !radio.menuOpen && teleBtnHit(...clockAt(e)); });
 
 fpsLayout();

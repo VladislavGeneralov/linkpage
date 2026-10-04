@@ -150,7 +150,7 @@ function drawTele() {
   });
 }
 addEventListener('pointerdown', (e) => {
-  if (!TELE.open || radio.menuOpen) return;
+  if (!TELE.open || radio.menuOpen || e.button !== 0) return;                                    // правая кнопка мыши — обзор, окна не касается
   const [x, y] = clockAt(e), h = teleHit(x, y);
   if (teleBtnHit(x, y)) return;                                                                  // кнопка сама откроет / закроет
   if (!h) { teleToggle(false); return; }                                                         // мимо окна — закрыть

@@ -64,7 +64,7 @@ function buildMuayThai(s) {
   // прожекторы над рингом; ночью горят
   for (const [u, v] of [[-4, -4], [4, -4], [-4, 4], [4, 4]]) { S.box(0.5, 0.35, 0.5, u, Y + EAVE - 0.3, -v, '#2a2a2c'); Gl.box(0.42, 0.06, 0.42, u, Y + EAVE - 0.5, -v, '#fff6d8'); }
   // вывеска на передней ферме: тайская строка и MUAY THAI
-  { const fh = signFit('MUAY THAI', 9, 0.16).h + 0.4, yc = Y + EAVE + RISE * 0.45, fu = HU + 0.3;
+  { const fh = signFit('MUAY THAI', 9, 0.16).h + 0.4, yc = Y + EAVE + RISE * 0.45, fu = HU + 1.35;   // снаружи фронтона (торец крыши — на u = HU + 1)
     S.box(0.15, fh, 10, fu, yc, 0, '#141418');
     for (const face of [1, -1]) for (const lit of [false, true]) { const T = sculptor(); signLines(T, 'MUAY THAI', 9, lit ? '#ffd84f' : '#e8c82a', 0.12, 0.16); const m = T.mesh();
       if (lit) { m.material = TOWN.lit || (TOWN.lit = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false })); m.visible = false; nightGlow.push(m); }
@@ -90,14 +90,14 @@ function buildMuayThai(s) {
 function buildLamaiViewPoint() {
   const g = spotGroup('lamai_vp'), sp = IS.spots.lamai_vp, L = sp.y, S = sculptor();
   // терраса: плита, ограждение по краю обрыва (u = 12) и по бокам
-  S.box(20, 0.9, 30, 2, L - 0.15, 0, '#c9c5bb'); S.skirt(-8, 12, -15, 15, L + 0.3, '#a8a59c', 3);
-  for (let v = -14.5; v <= 14.5; v += 1.45) S.box(0.08, 1.0, 0.08, 12, L + 0.8, -v, '#e8eef2');
-  S.box(0.1, 0.08, 29.2, 12, L + 1.3, 0, '#b8bcc0'); S.box(0.06, 0.9, 29, 12.03, L + 0.75, 0, '#cfe4ee');
-  for (const sg of [-1, 1]) { S.box(20, 0.08, 0.1, 2, L + 1.3, -sg * 15, '#b8bcc0'); for (let u = -8; u <= 12; u += 1.45) S.box(0.08, 1.0, 0.08, u, L + 0.8, -sg * 15, '#e8eef2'); }
+  S.box(20, 0.9, 30, 2, L - 0.44, 0, '#c9c5bb'); S.skirt(-8, 12, -15, 15, L + 0.01, '#a8a59c', 3);   // плита вровень с землёй площадки
+  for (let v = -14.5; v <= 14.5; v += 1.45) S.box(0.08, 1.0, 0.08, 12, L + 0.5, -v, '#e8eef2');
+  S.box(0.1, 0.08, 29.2, 12, L + 1.0, 0, '#b8bcc0'); S.box(0.06, 0.9, 29, 12.03, L + 0.45, 0, '#cfe4ee');
+  for (const sg of [-1, 1]) { S.box(20, 0.08, 0.1, 2, L + 1.0, -sg * 15, '#b8bcc0'); for (let u = -8; u <= 12; u += 1.45) S.box(0.08, 1.0, 0.08, u, L + 0.5, -sg * 15, '#e8eef2'); }
   wallBox(g, 12, 0, 0.3, 30); for (const sg of [-1, 1]) wallBox(g, 2, sg * 15, 20, 0.3);
   // ресторанчик на краю террасы (фото 09): дощатый настил, столбы, плоская тёмная крыша, стойка; белые перила с розовыми
   // цветами (бугенвиллея) по краю настила; на крыше — огромные белые буквы LAMAI VIEW POINT лицом к подъезжающим (к −u)
-  { const U0 = 3, U1 = 11, V = 11.5, RH = 3.0, WOOD = '#8a6a44', y = L + 0.3;
+  { const U0 = 3, U1 = 11, V = 11.5, RH = 3.0, WOOD = '#8a6a44', y = L;
     S.box(U1 - U0, 0.25, 2 * V, (U0 + U1) / 2, y + 0.12, 0, WOOD); for (let v = -V + 0.5; v < V; v += 1) S.box(U1 - U0, 0.02, 0.05, (U0 + U1) / 2, y + 0.26, -v, '#6f543a');
     for (const u of [U0 + 0.2, U1 - 0.2]) for (let v = -V + 0.2; v <= V; v += (2 * V - 0.4) / 4) S.box(0.22, RH, 0.22, u, y + RH / 2, -v, '#6a4a2e');
     S.box(U1 - U0 + 0.8, 0.3, 2 * V + 0.8, (U0 + U1) / 2, y + RH + 0.15, 0, '#3a3a3c'); S.box(0.15, 0.4, 2 * V + 0.8, U0 - 0.4, y + RH + 0.1, 0, '#6a4a2e');
@@ -114,20 +114,20 @@ function buildLamaiViewPoint() {
     for (let k = 0; k < 6; k++) S.box(0.12, 0.6, 0.12, U0 + 0.7, y + RH + 0.5, -w / 2 + k * w / 5, '#6a6e72');                   // крепления букв
   }
   // соломенная хижина у подъезда (остаётся)
-  thatchHut(S, -4, -10, L + 0.3, 5, 4, '#9a8a6a'); wallBox(g, -4, -10, 5, 4);
+  thatchHut(S, -4, -10, L, 5, 4, '#9a8a6a'); wallBox(g, -4, -10, 5, 4);
   // канатная дорога вниз по склону: две опоры, трос, красная кабинка
   { const topU = 10, topV = 12, dn = 70, bu = topU + dn, bv = topV + 6, by = spotGround(g, bu, bv);
     S.box(0.5, 6, 0.5, topU, L + 3.3, -topV, '#7a7e84'); S.box(1.4, 0.3, 0.5, topU, L + 6.2, -topV, '#7a7e84'); wallBox(g, topU, topV, 0.6, 0.6);
-    S.box(0.5, 5, 0.5, bu, by + 2.5, -bv, '#7a7e84'); S.box(1.4, 0.3, 0.5, bu, by + 5.0, -bv, '#7a7e84');
+    S.box(0.5, 5, 0.5, bu, by + 2.5, -bv, '#7a7e84'); S.box(1.4, 0.3, 0.5, bu, by + 5.0, -bv, '#7a7e84'); wallBox(g, bu, bv, 0.6, 0.6);
     S.rod([topU, L + 6.1, -topV], [bu, by + 4.9, -bv], 0.05, '#1c1c1e');
     const t = 0.42, cu = topU + (bu - topU) * t, cv = topV + (bv - topV) * t, cy = L + 6.1 + (by + 4.9 - L - 6.1) * t - 0.3;
     S.box(0.06, 0.9, 0.06, cu, cy - 0.45, -cv, '#3a3a3c'); S.box(1.6, 1.4, 1.2, cu, cy - 1.6, -cv, '#d42020'); S.box(1.4, 0.6, 1.25, cu, cy - 1.4, -cv, '#cfe4ee'); }
-  g.add(spotSign(S, -6, 13, L + 0.3, 'LAMAI VIEW POINT', 1));
+  g.add(spotSign(S, -6, 13, L, 'LAMAI VIEW POINT', 1));
   g.add(hotelMesh(S));
-  scooterRow(g, 97, 5, -6, 8, 0, -0.85, Math.PI / 2, L + 0.3);
+  scooterRow(g, 97, 5, -6, 12, 0, -0.85, Math.PI / 2, L);
   vegKeepOut.push(Object.assign((x, z) => { const p = g.worldToLocal(new THREE.Vector3(x, 0, z)); return p.x > -10 && p.x < 13 && Math.abs(p.z) < 16; }, { c: [sp.x, sp.z, 30] }));
   g.userData.c = new THREE.Vector3(sp.x, 0, sp.z); pierGroups.push(g);
-  spotPlace('СМОТРОВАЯ ЛАМАЙ', g, -4, 4, 1, 0);
+  spotPlace('СМОТРОВАЯ ЛАМАЙ', g, -3, 2, 1, 0);
 }
 
 // ---------- Ват Ламай ----------
@@ -148,9 +148,9 @@ function statueBuddhaUp(S, x, y, z, h) {                                  // с�
   for (const sg of [-1, 1]) S.blob(x + 0.15 * k, y + 0.12 * k, z + sg * 0.22 * k, 0.28 * k, 0.12 * k, 0.16 * k, T_GOLD_D, 6, 3);
   S.lathe([[0.42 * k, y + 0.2 * k], [0.46 * k, y + 1.6 * k], [0.4 * k, y + 3.4 * k], [0.5 * k, y + 4.6 * k], [0.32 * k, y + 5.0 * k]], x, z, T_GOLD, 10);
   S.blob(x + 0.04 * k, y + 5.4 * k, z, 0.3 * k, 0.36 * k, 0.3 * k, T_GOLD, 8, 5); S.blob(x, y + 5.85 * k, z, 0.17 * k, 0.16 * k, 0.17 * k, T_GOLD_D, 6, 3);   // голова, ушниша
-  S.limb([x, y + 4.75 * k, z - 0.48 * k], [x + 0.2 * k, y + 5.6 * k, z - 0.62 * k], 0.12 * k, 0.1 * k, T_GOLD, 6);                // правая рука вверх
-  S.limb([x + 0.2 * k, y + 5.6 * k, z - 0.62 * k], [x + 0.22 * k, y + 6.4 * k, z - 0.6 * k], 0.1 * k, 0.05 * k, T_GOLD, 5);
-  S.limb([x, y + 4.75 * k, z + 0.48 * k], [x + 0.1 * k, y + 3.3 * k, z + 0.5 * k], 0.12 * k, 0.1 * k, T_GOLD, 6);
+  S.limb([x, y + 4.75 * k, z + 0.48 * k], [x + 0.2 * k, y + 5.6 * k, z + 0.62 * k], 0.12 * k, 0.1 * k, T_GOLD, 6);                // правая рука вверх (правая сторона статуи — +Z)
+  S.limb([x + 0.2 * k, y + 5.6 * k, z + 0.62 * k], [x + 0.22 * k, y + 6.4 * k, z + 0.6 * k], 0.1 * k, 0.05 * k, T_GOLD, 5);
+  S.limb([x, y + 4.75 * k, z - 0.48 * k], [x + 0.1 * k, y + 3.3 * k, z - 0.5 * k], 0.12 * k, 0.1 * k, T_GOLD, 6);
 }
 function statueGuanYu(S, x, y, z, h) {                                    // воин Гуань Юй: тёмные доспехи с золотом, борода, алебарда
   const k = h / 5.5, AR = '#3e3a32', GD = T_GOLD;
@@ -172,7 +172,7 @@ function buildWatLamai(s) {
   const A = sculptor(), S = sculptor(), Gd = sculptor();
   A.quad([-D / 2 - 1, Y, -W / 2 - 1], [U1, Y, -W / 2 - 1], [U1, Y, W / 2 + 1], [-D / 2 - 1, Y, W / 2 + 1], '#c9c2b0');
   A.skirt(-D / 2 - 1, U1, -W / 2 - 1, W / 2 + 1, Y, '#a8a090');
-  for (let u = -D / 2; u < D / 2; u += 2) for (let v = -W / 2; v < W / 2; v += 2) if (((u + v) / 2) % 2 === 0) A.quad([u, Y + 0.01, v], [u + 2, Y + 0.01, v], [u + 2, Y + 0.01, v + 2], [u, Y + 0.01, v + 2], '#d6cfbc');
+  for (let i = 0, u = -D / 2; u < D / 2; u += 2, i++) for (let j = 0, v = -W / 2; v < W / 2; v += 2, j++) if ((i + j) % 2 === 0) A.quad([u, Y + 0.01, v], [u + 2, Y + 0.01, v], [u + 2, Y + 0.01, v + 2], [u, Y + 0.01, v + 2], '#d6cfbc');
   g.add(A.mesh()); lotApron(g, U1, -W / 2 - 1, W / 2 + 1, Y, '#c9c2b0');
   // зал: белые стены, жёлтые колонны по фасаду и бокам, красная двухъярусная крыша, позолота фронтона
   const HU = -9, HL = 16, HW = 10, WH = 5.2;
@@ -187,11 +187,11 @@ function buildWatLamai(s) {
   // статуи у входа на постаментах, перед ними — ряды цветных ведёрок-подношений
   const row = [[-8, statueGuanyin, 6.2], [0, statueBuddhaUp, 6.8], [8, statueGuanYu, 5.6]];
   for (const [v, make, h] of row) { S.box(3.0, 1.2, 3.0, 7, Y + 0.6, -v, '#d8d0bc'); make(Gd, 7, Y + 1.2, -v, h); wallBox(g, 7, v, 3.0, 3.0);
-    for (let i = 0; i < 6; i++) S.box(0.32, 0.36, 0.32, 9.2, Y + 0.18, -(v - 1.25 + i * 0.5), ['#e8c82a', '#2a8ad8', '#e8482a', '#3aa85a', '#f2f2ee', '#e88ab0'][(i + 6 + v) % 6]); }
-  { const v = -4, y = Y; S.box(1.2, 0.8, 1.2, 9, y + 0.4, -v, '#d8d0bc'); S.lathe([[0.35, y + 0.8], [0.3, y + 2.0], [0.16, y + 2.6], [0.02, y + 2.75]], 9, -v, '#f2f0ea', 8); S.blob(9.12, y + 2.55, -v, 0.13, 0.16, 0.13, '#f2f0ea', 6, 3); }
+    for (let i = 0; i < 6; i++) S.box(0.32, 0.36, 0.32, 9.2, Y + 0.18, -(v - 1.25 + i * 0.5), ['#e8c82a', '#2a8ad8', '#e8482a', '#3aa85a', '#f2f2ee', '#e88ab0'][((i + v) % 6 + 6) % 6]); }
+  { const v = -4, y = Y; S.box(1.2, 0.8, 1.2, 9, y + 0.4, -v, '#d8d0bc'); wallBox(g, 9, v, 1.2, 1.2); S.lathe([[0.35, y + 0.8], [0.3, y + 2.0], [0.16, y + 2.6], [0.02, y + 2.75]], 9, -v, '#f2f0ea', 8); S.blob(9.12, y + 2.55, -v, 0.13, 0.16, 0.13, '#f2f0ea', 6, 3); }
   // флаги: тайский и жёлтый буддийский
-  for (const [v, cols] of [[15, ['#c8302a', '#f2f2ee', '#2a3a8a', '#f2f2ee', '#c8302a']], [17, ['#f2c81e', '#f2c81e', '#f2c81e', '#f2c81e', '#f2c81e']]]) {
-    S.tube(14, Y, Y + 8, -v, 0.06, 0.05, '#c8ccd0', 5); cols.forEach((c, i) => S.box(0.04, 0.16, 1.4, 14, Y + 7.6 - i * 0.16, -(v + 0.75), c)); }
+  for (const [v, cols] of [[15, ['#c8302a', '#f2f2ee', '#2a3a8a', '#f2f2ee', '#c8302a']], [17, ['#f2c81e', '#f2c81e', '#f2c81e', '#f2c81e', '#f2c81e']]])   // флагштоки — сбиваются
+    templeProp(g, 14, v, (F) => { F.tube(0, Y, Y + 8, 0, 0.06, 0.05, '#c8ccd0', 5); cols.forEach((c, i) => F.box(0.04, 0.16, 1.4, 0, Y + 7.6 - i * 0.16, -0.75, c)); }, { kind: 'pole', mat: 'metal', color: '#c8ccd0', r: 0.15, loss: 0.04 });
   g.add(hotelMesh(S)); g.add(templeMesh(Gd));
   // вывеска у дороги: тайская строка и WAT LAMAI
   { const Sg = sculptor(); g.add(spotSign(Sg, U1 - 3, -15, Y, 'WAT LAMAI', 1)); g.add(hotelMesh(Sg)); }

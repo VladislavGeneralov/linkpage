@@ -10,8 +10,11 @@
 // джойстиком руля вниз. Приборы игры (карта, спидометр, радио, выбор машины) остаются на своих местах.
 // Всё нарисовано по точкам игры (просил Влад): отдельный холст 480 × 270 растянут без сглаживания, как кадр; надписи —
 // пиксельным шрифтом приборов. Касания ловят невидимые области ровно над нарисованным.
-// TOUCH_UI — показывать ли слой вообще (флаг Влада: пока виден всегда, потом — только на сенсорных устройствах).
+// TOUCH_UI — есть ли слой вообще. Показан ли он — переключатель TOUCH на поле страницы снизу слева (просил Влад):
+// по умолчанию на компьютере выключен, на телефоне включён (иначе нечем рулить); выбор запоминается в браузере.
 const TOUCH_UI = true;
+function touchPref() { try { const v = localStorage.getItem('samui.touch'); if (v !== null) return v === '1'; } catch (e) {} return typeof COARSE !== 'undefined' && COARSE; }
+function touchSet(on) { touchShow(on); try { localStorage.setItem('samui.touch', on ? '1' : '0'); } catch (e) {} const t = document.getElementById('touchToggle'); if (t) t.classList.toggle('on', on); }
 const TOUCH = { steer: 0, gas: 0, brake: 0, hand: false, crawl: 0, lookX: 0, lookY: 0, lookSpin: 0, el: null };   // lookSpin: −1/0/+1 — камера медленно кружит (обзор дожат до края)
 const TOUCH_DEAD = 0.08, TOUCH_CRAWL = 0.6;   // мёртвая зона руля; на сколько хода вверх/вниз включается малый ход
 // где что лежит, в точках игры: левый верхний угол и размер (джойстик — диаметр); отступ от края кадра — 5 точек
@@ -43,7 +46,7 @@ function touchInit() {
   TOUCH.g = cv.getContext('2d');
   const watch = () => {
     const menu = (typeof radio !== 'undefined' && radio.menuOpen) || (typeof CAR_PICK !== 'undefined' && CAR_PICK.open) || (typeof TELE !== 'undefined' && TELE.open);
-    if (menu !== root.classList.contains('under')) { root.classList.toggle('under', menu); if (menu) Object.assign(TOUCH, { steer: 0, gas: 0, brake: 0, hand: false, crawl: 0, lookX: 0, lookY: 0, lookSpin: 0 }); }
+    if (menu !== root.classList.contains('under')) { root.classList.toggle('under', menu); if (menu) { for (const el of Object.values(TOUCH.parts || {})) el.reset && el.reset(); Object.assign(TOUCH, { steer: 0, gas: 0, brake: 0, hand: false, crawl: 0, lookX: 0, lookY: 0, lookSpin: 0 }); } }
     touchDraw();
     requestAnimationFrame(watch);
   };
@@ -62,6 +65,7 @@ function touchInit() {
     base.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); id = e.pointerId; base.setPointerCapture(id); move(e); touchWake(); });
     base.addEventListener('pointermove', (e) => { if (e.pointerId === id) { e.stopPropagation(); move(e); } });
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) base.addEventListener(ev, (e) => { if (e.pointerId === id) { id = null; base.kx = base.ky = 0; base.on = false; on(0, 0, base); } });
+    base.reset = () => { if (id !== null && base.hasPointerCapture(id)) base.releasePointerCapture(id); id = null; base.kx = base.ky = 0; base.on = false; on(0, 0, base); };
     return base;
   };
   const stick = joystick('stick', (dx, dy, base) => {
@@ -77,20 +81,25 @@ function touchInit() {
     let id = null;
     el.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); id = e.pointerId; el.setPointerCapture(id); el.on = true; on(); touchWake(); });
     for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) el.addEventListener(ev, (e) => { if (e.pointerId === id) { id = null; el.on = false; off(); } });
+    el.reset = () => { if (id !== null && el.hasPointerCapture(id)) el.releasePointerCapture(id); id = null; el.on = false; off(); };
   };
   hold(gas, () => { TOUCH.gas = 1; }, () => { TOUCH.gas = 0; });
   hold(hand, () => { TOUCH.hand = true; }, () => { TOUCH.hand = false; });
   for (const el of Object.values(TOUCH.parts)) el.addEventListener('contextmenu', (e) => e.preventDefault());
   addEventListener('resize', touchLayout); touchLayout();
-  touchShow(TOUCH_UI);
+  addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') touchWake(); });          // жест для браузера — отпускание пальца
+  touchShow(TOUCH_UI && touchPref());
+  { const t = document.getElementById('touchToggle'); if (t) { t.classList.toggle('on', !TOUCH.el.hidden); t.addEventListener('click', () => touchSet(TOUCH.el.hidden)); } }
 }
 // первое касание включает звук и музыку, как первое нажатие клавиши
 // и на телефоне — во весь экран, горизонтально (Android; iPhone так не умеет — там «На экран Домой», manifest.json)
 function touchWake() {
   if (typeof startMusic === 'function') startMusic(); if (typeof soundStart === 'function') soundStart();
   const d = document.documentElement;
-  if (typeof COARSE !== 'undefined' && COARSE && !document.fullscreenElement && d.requestFullscreen)
-    d.requestFullscreen({ navigationUI: 'hide' }).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})).catch(() => {});
+  if (typeof COARSE !== 'undefined' && COARSE && !TOUCH.fs && !document.fullscreenElement && d.requestFullscreen) {   // (один раз: вышел сам — не тащим обратно)
+    TOUCH.fs = true;
+    d.requestFullscreen({ navigationUI: 'hide' }).then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape').catch(() => {})).catch(() => { TOUCH.fs = false; });
+  }
 }
 // холст слоя — того же размера на экране, что кадр; невидимые области касаний — ровно над нарисованным (TOUCH_AT)
 function touchLayout() {

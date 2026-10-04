@@ -139,7 +139,9 @@ function buildBeaches() {
       const f = frame(i + 4), roll = rnd(), B = propBatch();
       // сколько места до дороги: где дорога подходит к воде близко, постройка сдвигается к песку или не ставится вовсе
       let room = 99; for (let d = 18; d < 74; d += 2) { const q = W(f, 0, d); if (roadDist(q[0], q[1]) < halfS + 2) { room = d; break; } }
-      const bd = Math.min(50, room - 13), canBuild = bd >= 33, y50 = groundY(...W(f, 0, bd));
+      // и не на ряды домов посёлка (у Ламая лавки пляжной улицы стоят и со стороны моря)
+      const onRow = (d) => [-7, 0, 7].some((a) => { const [x, z] = W(f, a, d); return RS.rows.some((q) => q[3] === 'town' && Math.hypot(q[0] - x, q[1] - z) < q[2] + 6); });
+      const bd = Math.min(50, room - 13), canBuild = bd >= 33 && !onRow(bd), y50 = groundY(...W(f, 0, bd));
       const lounger = (a, d, cushion, frameCol) => {                      // шезлонг ногами к морю
         const [x, z] = W(f, a, d), y = groundY(x, z), yaw = Math.atan2(-f.nz, f.nx), it = B.begin();   // длинная ось — по нормали к берегу
         B.box(x, y + 0.3, z, 1.9, 0.08, 0.66, yaw, frameCol); B.box(x - f.nx * 0.1, y + 0.37, z - f.nz * 0.1, 1.5, 0.08, 0.58, yaw, cushion);
@@ -164,7 +166,7 @@ function buildBeaches() {
           if (q() < 0.3) { const p = W(f, (q() - 0.5) * 6, bd - 6.5); propTableSet(B, p[0], groundY(...p), p[1], yaw, q); } }
         rows(7, [11, 16]);
       } else if (roll < 0.57 && chaweng) {                                // корпус отеля (где до дороги хватает места) и шезлонги
-        if (room > 68) { const S = sculptor(); solid(f, 55, S, beachHotel(S, groundY(...W(f, 0, 55))), 14); }
+        if (room > 68 && !onRow(55)) { const S = sculptor(); solid(f, 55, S, beachHotel(S, groundY(...W(f, 0, 55))), 14); }
         else if (canBuild) { const S = sculptor(); solid(f, bd, S, beachTentBar(S, y50), 11); }
         rows(8, [12, 17]);
       } else if (roll < 0.72) {                                           // три бунгало и ряд шезлонгов

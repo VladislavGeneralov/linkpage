@@ -46,9 +46,9 @@ function buildCentralFestival(s) {
   // площадка: асфальт стоянки, плитка площади; борт по краю, рваный край к дороге
   A.quad([-D / 2 - 1, Y, -W / 2 - 1], [U1, Y, -W / 2 - 1], [U1, Y, W / 2 + 1], [-D / 2 - 1, Y, W / 2 + 1], '#8f8b84');
   A.skirt(-D / 2 - 1, U1, -W / 2 - 1, W / 2 + 1, Y, '#827f76');
-  for (let u = 6; u < 30; u += 2) for (let v = -W / 2 + 2; v < W / 2 - 2; v += 2) if ((u + v) % 4 === 0) A.quad([u, Y + 0.01, v], [u + 2, Y + 0.01, v], [u + 2, Y + 0.01, v + 2], [u, Y + 0.01, v + 2], '#c9c4b8');
+  for (let i = 0, u = 6; u < 30; u += 2, i++) for (let j = 0, v = -W / 2 + 2; v < W / 2 - 2; v += 2, j++) if ((i + j) % 2 === 0) A.quad([u, Y + 0.01, v], [u + 2, Y + 0.01, v], [u + 2, Y + 0.01, v + 2], [u, Y + 0.01, v + 2], '#c9c4b8');
   A.quad([6, Y + 0.005, -W / 2 + 2], [30, Y + 0.005, -W / 2 + 2], [30, Y + 0.005, W / 2 - 2], [6, Y + 0.005, W / 2 - 2], '#d6d1c4');   // плитка площади
-  for (let v = -W / 2 + 4; v < W / 2 - 3; v += 3) A.box(0.12, 0.01, 2.2, 38, Y + 0.012, -v, '#e8e6de');                             // разметка стоянки
+  for (let v = -W / 2 + 0.5; v < W / 2; v += 5.5) A.box(5, 0.01, 0.12, 38, Y + 0.012, -v, '#e8e6de');                              // разметка стоянки: границы мест
   g.add(A.mesh());
   lotApron(g, U1, -W / 2 - 1, W / 2 + 1, Y, '#8f8b84');
   // корпус: два этажа галерей лицом к площади (u = 6), сзади — глухой объём
@@ -101,7 +101,7 @@ function buildCentralFestival(s) {
 // ---------- Soi Green Mango ----------
 function buildGreenMango() {
   const g = spotGroup('green_mango'), rnd = seededRandom(7741), NAMES = ['GREEN MANGO', 'SOUND CLUB', 'THE ISLAND', 'REGGAE BAR', 'LASER BAR', 'TROPICAL', 'BAR 99', 'SHOTS',
-    'BOOM BOOM', 'KARAOKE', 'GM_NEON', 'BEER BAR', 'BLUE MOON', 'PARADISE', 'COCO BAR', 'ROCK BAR'];
+    'BOOM BOOM', 'KARAOKE', 'NEON', 'BEER BAR', 'BLUE MOON', 'PARADISE', 'COCO BAR', 'ROCK BAR'];
   const SIDE = LANE_HALF + 1.4, D = 7.5, LIT = TOWN.lit || (TOWN.lit = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, fog: false }));
   let k = 0;
   const bars = [];                                                                                 // (для мусорок и столиков)
@@ -138,9 +138,9 @@ function buildGreenMango() {
     for (const sd of [-1, 1]) { S.box(0.4, 7.6, 0.4, 7, y0 + 3.8, -sd * (SIDE + 0.2), '#2a2a2c'); wallBox(g, 7, sd * (SIDE + 0.2), 0.5, 0.5); }
     const ah = signFit('SOI GREEN MANGO', 2 * SIDE - 0.4, 0.11).h + 0.35;                         // доска — по высоте двух строк
     S.box(0.3, ah, 2 * SIDE + 1, 7, y0 + 5.7 + ah / 2, 0, '#141418');
-    for (const [T, c] of [[S, '#5aff7a'], [Gl, '#7aff9a']]) for (const face of [1, -1]) { const A = sculptor(); signLines(A, 'SOI GREEN MANGO', 2 * SIDE - 0.4, c, 0.17, 0.11); const mm = T === S ? A.mesh() : A.mesh(); if (T === Gl) { mm.material = LIT; mm.visible = false; nightGlow.push(mm); } mm.rotation.y = face * Math.PI / 2; mm.position.set(7, y0 + 5.7 + ah / 2, 0); g.add(mm); }
+    for (const [T, c] of [[S, '#5aff7a'], [Gl, '#7aff9a']]) for (const face of [1, -1]) { const A = sculptor(); signLines(A, 'SOI GREEN MANGO', 2 * SIDE - 0.4, c, 0.17, 0.11); const mm = T === S ? A.mesh() : A.mesh(); if (T === Gl) { mm.material = LIT; mm.visible = false; nightGlow.push(mm); } mm.rotation.y = face * Math.PI / 2; mm.position.set(7 + (T === Gl ? face * 0.02 : 0), y0 + 5.7 + ah / 2, 0); g.add(mm); }
     g.add(hotelMesh(S)); const n = Gl.mesh(); n.material = LIT; n.visible = false; nightGlow.push(n); g.add(n); }
-  scooterRow(g, 83, 5, 14, -(SIDE - 0.6), 3.2, 0, Math.PI / 2, spotGround(g, 14, 0) + 0.1);
+  scooterRow(g, 83, 3, 8.8, -(SIDE - 0.6), 1.0, 0, Math.PI / 2, spotGround(g, 9, 0) + 0.1);           // между аркой и первым баром
   g.userData.c = new THREE.Vector3(IS.spots.green_mango.x, 0, IS.spots.green_mango.z); pierGroups.push(g);
   vegKeepOut.push(Object.assign((x, z) => { const p = g.worldToLocal(new THREE.Vector3(x, 0, z)); return p.x > 0 && p.x < 78 && Math.abs(p.z) < SIDE + D + 2; }, { c: [IS.spots.green_mango.x, IS.spots.green_mango.z, 90] }));
   spotPlace('SOI GREEN MANGO', g, 2, 0, 1, 0);
@@ -163,11 +163,12 @@ function buildChawengLake() {
     S.box(10, 1.6, 6, 0, y - 0.1, 0, '#3a3a40'); S.box(10.2, 0.1, 6.2, 0, y + 0.72, 0, '#2a2a2c');
     for (const x of [-5, 5]) for (const z of [-3, 3]) S.box(0.25, 6, 0.25, x, y + 3.7, z, '#8e9296');
     S.box(10.4, 0.3, 0.3, 0, y + 6.6, 3, '#8e9296'); S.box(10.4, 0.3, 0.3, 0, y + 6.6, -3, '#8e9296'); S.box(0.3, 0.3, 6.4, -5, y + 6.6, 0, '#8e9296'); S.box(0.3, 0.3, 6.4, 5, y + 6.6, 0, '#8e9296');
-    S.box(10, 4.6, 0.1, 0, y + 3.1, -2.9, '#1c1c22'); for (const x of [-4.2, 4.2]) S.box(1.0, 2.0, 0.9, x, y + 1.7, 2.2, '#161618');
-    for (let i = 0; i < 6; i++) S.box(0.3, 0.3, 0.4, -3.5 + i * 1.4, y + 6.3, 2.6, ['#f2f2ee', '#e8c82a'][i % 2]);
+    S.box(10, 4.6, 0.1, 0, y + 3.1, 2.9, '#1c1c22'); for (const x of [-4.2, 4.2]) S.box(1.0, 2.0, 0.9, x, y + 1.7, -2.2, '#161618');   // задник — к воде, сцена — к дороге
+    for (let i = 0; i < 6; i++) S.box(0.3, 0.3, 0.4, -3.5 + i * 1.4, y + 6.3, -2.6, ['#f2f2ee', '#e8c82a'][i % 2]);
   }, [10, 6]);
   // щит у сала: тайская и английская строки
-  if (sp) { const S = sculptor(), y = groundY(sp[0], sp[1]); sala.add(spotSign(S, 7, -6, y, 'CHAWENG LAKE')); sala.add(hotelMesh(S)); }
+  if (sp) { const S = sculptor(), y = groundY(sp[0], sp[1]), gs = new THREE.Group(); gs.rotation.y = Math.PI / 2; gs.position.set(5, 0, -7); sala.add(gs);   // щит — у дороги, лицом к ней (−Z группы)
+    gs.add(spotSign(S, 0, 0, y, 'CHAWENG LAKE', 1)); gs.add(hotelMesh(S)); }
   // кусты по урезу: вдоль линии озера через 3 м с обеих сторон ищется, где кончается вода, и там — куст или куртина
   { const q = seededRandom(7751), P = IS.lake.pts;
     for (let k = 0; k + 1 < P.length; k++) {

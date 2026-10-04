@@ -249,7 +249,8 @@ function vehBump(P) {
   const v2 = (1 + e) * m1 / (m1 + m2) * v, sp = Math.abs(v2), sg = v >= 0 ? 1 : -1;
   const fx = -Math.sin(car.course) * sg, fz = -Math.cos(car.course) * sg;                         // куда ехала машина
   const w = P.m.getWorldPosition(new THREE.Vector3()); let tx = w.x - car.x, tz = w.z - car.z; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
-  const s2 = vehTravel(P, sp), d1 = Math.min(recoilDist(Math.abs(v), Math.abs(fx * tx + fz * tz)) * m2 / (m1 + m2), VEH_RECOIL_SHARE * s2), v1 = 0;
+  const c = Math.abs(fx * tx + fz * tz), s2 = vehTravel(P, sp), d1 = Math.min(recoilDist(Math.abs(v), c) * m2 / (m1 + m2), VEH_RECOIL_SHARE * s2);
+  const v1 = v * (1 - c) * (1 - c);                                                              // в лоб — стоп; вскользь — почти без потери хода
   let dx = fx * 0.65 + tx * 0.35, dz = fz * 0.65 + tz * 0.35; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;   // удар не по центру — уводит в сторону
   const side = fx * tz - fz * tx;                                                                   // с какой стороны от пути была середина: туда и закрутит
   vehUnpark(P);
