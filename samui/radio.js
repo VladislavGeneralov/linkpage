@@ -13,7 +13,7 @@
 // ссылка SoundCloud по умолчанию (трек или плейлист): грузится и играет сама; '' — встроенный трек
 const RADIO_PLAYLIST = 'https://soundcloud.com/ueberlingen-deemkeyne/sets/dub-techno-deep-tech';
 const RADIO_API = 'https://scdj-proxy.ptntonesix.workers.dev';    // прокси к API SoundCloud
-const RADIO_CLIENT_ID = 'dkevB9EsY4jIoSm8RfddPNUKyn6hurXF';       // время от времени меняется; свой вписывается в меню
+const RADIO_CLIENT_ID = 'dkevB9EsY4jIoSm8RfddPNUKyn6hurXF';       // запасной: ключ подставляет сам прокси (см. radioApi)
 const STREAM_DELAY = 0.2;                  // с — задержка звука до колонок (анализ опережает слух)
 const LIVE_HOP = 512;                      // сэмплов в шаге анализа (~11 мс)
 const LIVE_N = 1024;                       // шагов в кольцевых буферах (~11 с)
@@ -31,16 +31,24 @@ const store = {                            // localStorage может быть �
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
   del(k) { try { localStorage.removeItem(k); } catch (e) {} },
 };
-const radioClientId = () => store.get('tg_client_id') || RADIO_CLIENT_ID;
-
 // ---------- Очередь и воспроизведение ----------
-function radioApi(path, params) {
-  const qs = Object.entries({ ...params, client_id: radioClientId() }).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&');
+// client_id прокси находит сам; шлём его, только если игрок вписал свой в меню.
+// 400 (старый прокси без ключа не работает) или 401 (ключ отвергнут) — один повтор с RADIO_CLIENT_ID
+async function radioApi(path, params) {
+  const own = store.get('tg_client_id') || '';
   const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 12000);   // прокси молчит — не ждём вечно
-  return fetch(RADIO_API + path + '?' + qs, { signal: stop.signal })
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .catch(e => { throw e.name === 'AbortError' ? new Error('no response') : e; })
-    .finally(() => clearTimeout(timer));
+  const ask = (cid) => fetch(RADIO_API + path + '?' + Object.entries(cid ? { ...params, client_id: cid } : params)
+    .map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&'), { signal: stop.signal });
+  try {
+    let r = await ask(own);
+    if ((r.status === 400 || r.status === 401) && own !== RADIO_CLIENT_ID) r = await ask(RADIO_CLIENT_ID);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } catch (e) {
+    throw e.name === 'AbortError' ? new Error('no response') : e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 const radioProgressive = (t) => t.media && t.media.transcodings && t.media.transcodings.find(x => x.format && x.format.protocol === 'progressive');
 function radioStatus(text) { radio.status = text; }
@@ -432,7 +440,7 @@ function menuPlace() {
   M.local = { x: M.x + 47, y: M.y + 35, w: 71, h: 11 };
   M.trY = M.y + 51;
   M.list = { x: M.x + 8, y: M.y + 75, w: M.w - 16, h: 13 * M.rowH, rows: 13 };
-  M.cid = { x: M.x + 54, y: M.y + M.h - 16, w: M.w - 62, h: 11 };
+  M.cid = { x: M.x + 93, y: M.y + M.h - 16, w: M.w - 101, h: 11 };    // слева подпись CLIENT ID (OPTIONAL)
 }
 const seekAt = (x) => { const T = MENU.tr; return T ? Math.min(1, Math.max(0, (x - T.seek0) / (T.seek1 - T.seek0))) : 0; };
 const MENU_COL = { panel: 'rgba(16,22,34,0.95)', edge: '#3a4a60', field: '#0a0e16', orange: '#ff5500', ghost: '#26334a',
@@ -559,12 +567,12 @@ function drawRadioMenu() {
     g.fillStyle = C.hover; g.fillRect(L.x + L.w - 2, L.y, 2, L.h);
     g.fillStyle = C.grey; g.fillRect(L.x + L.w - 2, by, 2, bh);
   }
-  hudGlyphs(hudText('CLIENT_ID'), M.x + 8, fc.y + 3, C.grey, false);
-  field(cid, fc, 'ENTER YOUR OWN IF STREAMS STOP LOADING');
+  hudGlyphs(hudText('CLIENT ID (OPTIONAL)'), M.x + 8, fc.y + 3, C.grey, false);
+  field(cid, fc, 'EMPTY = AUTOMATIC');
 }
 function radioSubmit() {
   const url = document.getElementById('scUrl').value.trim(), cid = document.getElementById('scCid').value.trim();
-  if (cid) store.set('tg_client_id', cid);
+  if (cid) store.set('tg_client_id', cid); else store.del('tg_client_id');   // пустое поле — ключ снова подставляет прокси
   const back = !url && RADIO_PLAYLIST;                      // пустое поле — вернуть плейлист по умолчанию
   if (!back && !/^https?:\/\/([a-z0-9-]+\.)?soundcloud\.com\/.+/i.test(url)) return radioStatus('need a link like https://soundcloud.com/…');
   userPaused = false; radio.wantPlay = true;
