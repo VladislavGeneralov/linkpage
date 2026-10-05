@@ -25,6 +25,8 @@ const TELE_EN = {
   'ПИРС НАТОН': 'NATHON PIER', 'ПИРС SEATRAN': 'SEATRAN PIER', 'ПИРС ЛИПА НОЙ': 'LIPA NOI PIER', 'ПИРС БАНГРАК': 'BANG RAK PIER',
   'ПИРС МАЕНАМ': 'MAENAM PIER', 'ПИРС БОПХУТ': 'BOPHUT PIER', 'ПИРС ТОНГ КРУТ': 'THONG KRUT PIER',
   'ЛОКАТОР 1': 'RADAR 1', 'ЛОКАТОР 2': 'RADAR 2', 'ПОЖАРНАЯ ЧАВЕНГ': 'FIRE STATION CHAWENG', 'ПОЖАРНАЯ НАТОН': 'FIRE STATION NATHON',
+  'ПЛЯЖ ЧАВЕНГ НОЙ': 'CHAWENG NOI', 'ПЛЯЖ КОРАЛ КОВ': 'CORAL COVE', 'ПЛЯЖ БАНГ КАО': 'BANG KAO', 'ВОРОТА СО СЛОНАМИ': 'ELEPHANT GATE',
+  'ТОНГ КРУТ РЕСТОРАНЫ': 'THONG KRUT SEAFOOD', 'БАР БАНГРАК': 'BANG RAK BEACH BAR', 'БОЛЬНИЦА': 'BANGKOK HOSPITAL',
   'ОТЕЛЬ ДЖИНТА': 'JINTA HOTEL', 'БУНГАЛО ЛОЛИТА': 'LOLITA BUNGALOW', 'БХУНДАРИ РЕЗИДЕНС': 'BHUNDHARI RESIDENCE',
 };
 // на всякий случай: русских букв в окне не бывает — незнакомое название пишется латиницей
@@ -65,10 +67,12 @@ function teleTree() {
   ].filter(Boolean);
   const groups = [
     { title: 'TOWNS', items: towns },
-    { title: 'SIGHTS', items: pick(['CENTRAL FESTIVAL', 'SOI GREEN MANGO', 'ОЗЕРО ЧАВЕНГ', 'РИНГ ЛАМАЙ', 'СМОТРОВАЯ ЛАМАЙ', 'БОЛЬШОЙ БУДДА', 'ВАТ ПЛАЙ ЛАЕМ', 'ВАТ КХУНАРАМ', 'ВАТ НА ПХРА ЛАН', 'ВАТ ЛАМАЙ', 'ПАГОДА КХАО ХУА ДЖУК', 'ПАГОДА ЛАЕМ СОР', 'КИТАЙСКИЙ ХРАМ МАЕНАМ',
+    { title: 'SIGHTS', items: pick(['CENTRAL FESTIVAL', 'SOI GREEN MANGO', 'ОЗЕРО ЧАВЕНГ', 'РИНГ ЛАМАЙ', 'СМОТРОВАЯ ЛАМАЙ', 'БОЛЬШОЙ БУДДА', 'ВАТ ПЛАЙ ЛАЕМ', 'ВАТ КХУНАРАМ', 'ВАТ НА ПХРА ЛАН', 'ВАТ ЛАМАЙ', 'ВОРОТА СО СЛОНАМИ', 'ТОНГ КРУТ РЕСТОРАНЫ', 'ПАГОДА КХАО ХУА ДЖУК', 'ПАГОДА ЛАЕМ СОР', 'КИТАЙСКИЙ ХРАМ МАЕНАМ',
       'ХИН ТА И ХИН ЯЙ', 'СМОТРОВАЯ ЛАД КО', 'ВЕРШИНА КАО ПОМ', 'ВОДОПАД НА МУАНГ 1', 'ВОДОПАД НА МУАНГ 2', 'ВОДОПАД ХИН ЛАД']) },
-    { title: 'BEACHES', items: pick(['ПЛЯЖ ЧАВЕНГ', 'ПЛЯЖ ЛАМАЙ', 'ПЛЯЖ ЧОНГ МОН', 'ПЛЯЖ СИЛВЕР', 'ПЛЯЖ БОПХУТ', 'ПЛЯЖ МАЕНАМ']).concat(match(/^ПЛЯЖ /)) },
+    { title: 'BEACHES', items: pick(['ПЛЯЖ ЧАВЕНГ', 'ПЛЯЖ ЛАМАЙ', 'ПЛЯЖ ЧОНГ МОН', 'ПЛЯЖ СИЛВЕР', 'ПЛЯЖ БОПХУТ', 'ПЛЯЖ МАЕНАМ', 'ПЛЯЖ ЧАВЕНГ НОЙ', 'ПЛЯЖ КОРАЛ КОВ', 'ПЛЯЖ БАНГ КАО']).concat(match(/^ПЛЯЖ /)) },
     { title: 'SHOPPING', subs: [
+      { title: 'MALLS', items: pick(['CENTRAL FESTIVAL', 'BIG C']) },                       // (Central Festival — и в SIGHTS)
+      { title: 'SPECIAL SHOPS', items: pick(['NATHON GUITAR SHOP', 'ROCKESTRA MUSIC', 'SAMUI GUITAR SHOP', 'ARMANI RICHY TAILOR', 'ROYAL FASHION TAILOR', 'HOME ART TATTOO', 'STARCAT TATTOO', 'KITE SHOP', 'MOTORBIKE RENTAL', 'HARLEY RENTAL']) },   // specialshops.js
       { title: 'NIGHT MARKETS', items: match(/^НОЧНОЙ РЫНОК /) },
       { title: 'MARKETS', items: match(/^(РЫНОК |ЛАВКИ )/) },
       { title: '7-ELEVEN', items: match(/^7-ELEVEN /) },

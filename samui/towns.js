@@ -97,6 +97,8 @@ function townStreet(R, r, s0, s1, side, FR, D, lens, gap, o, make, rnd) {
   }
   return n;
 }
+// выцветшая реклама на торцах шопхаусов: слово, фон, буквы
+const WALL_ADS = [['COCA-COLA', '#b8443a', '#f2ece0'], ['LEO', '#ece6d8', '#b8443a'], ['CHANG', '#3a7a52', '#f2ece0'], ['HONDA', '#ece6d8', '#c23a32'], ['SINGHA', '#c4a050', '#f6f0e2'], ['YAMAHA', '#2f5694', '#f2ece0']];
 const SIGNS_EN = ['GOLD', 'PHARMACY', 'OPTIC', 'TAILOR', 'BAKERY', 'MOBILE', 'HARDWARE', 'TRAVEL', 'NOODLES', 'COFFEE', 'TEXTILE', 'BANK', 'FOTO', 'WATCH', 'SHOES', 'TOYS', 'BOOKS', 'DENTAL', 'RICE', 'TEA'];
 
 // ---------- ряд бетонных шопхаусов ----------
@@ -113,35 +115,38 @@ function shophouseRow(lot, rnd, st) {
   S.box(L, 2.4, D, 0, P - 1.2, 0, '#8f8b80');                                                      // цоколь уходит в землю
   townWalk(lot, S, 2.7, st.kerb);
   let floors = st.floors[0] + ((rnd() * (st.floors[1] - st.floors[0] + 1)) | 0), top = 0;
+  const secs = [];                                                                                 // [x, ширина, этажей, высота] — для торцов
   for (let i = 0; i < n; i++) {
     if (rnd() < 0.55) floors = st.floors[0] + ((rnd() * (st.floors[1] - st.floors[0] + 1)) | 0);
     const x = -L / 2 + (i + 0.5) * w, wd = w - 0.05, H = floors * FL + (st.roof === 'flat' ? 0.6 : 0), wall = pick(st.walls), front = rnd(), sign = pick(st.signs || SIGNS_EN);
     const sc = pick(['#c8302a', '#1f4fa0', '#2f7a4a', '#f2c81e', '#e8782a', '#7a2a8a', '#f2f2ee', '#1c1c1e']), ink = sc === '#f2f2ee' || sc === '#f2c81e' ? '#1a1a1a' : '#f8f4e6';
-    top = Math.max(top, H);
+    top = Math.max(top, H); secs.push([x, wd, floors, H]);
+    const sp = specialAt(lot, x, F, i), Sf = sp ? sculptor() : S, Gf = sp ? sculptor() : Gl;           // особая лавка (specialshops.js): обычный первый этаж уходит в пустой сборщик — ряд случайностей тот же
     S.box(wd, H, D, x, P + H / 2, 0, wall);
     if (st.roof === 'flat') { S.box(wd + 0.04, 0.12, D + 0.06, x, P + H - 0.5, 0, '#b8b6ae'); if (rnd() < 0.4) S.tube(x + (rnd() - 0.5), P + H, P + H + 1.2, -1 - rnd() * 2, 0.5, 0.5, pick(['#2f5f9a', '#8ea2b4', '#e8e8e4']), 8); }
     // первый этаж: открытая лавка, рольставня или витрина
     if (front < 0.45) {
-      S.box(wd - 0.7, 2.5, 0.1, x, P + 1.25, F + 0.01, '#2a2622');
-      for (let k = 0; k < 5; k++) S.box(0.5 + rnd() * 0.5, 0.4 + rnd() * 0.5, 0.3, x - 1.4 + k * 0.7, P + 0.3 + rnd() * 1.3, F + 0.12, pick(['#e8c82a', '#d84a3a', '#f2f2ee', '#3a8ad8', '#e88a2a', '#5aa83a']));
-      Gl.box(wd - 0.8, 1.0, 0.02, x, P + 2.0, F + 0.08, '#ffdf9a');
-    } else if (front < 0.68) { for (let k = 0; k < 9; k++) S.box(wd - 0.7, 0.26, 0.08, x, P + 0.14 + k * 0.28, F + 0.02, k % 2 ? '#a9adb2' : '#bfc3c7'); }
+      Sf.box(wd - 0.7, 2.5, 0.1, x, P + 1.25, F + 0.01, '#2a2622');
+      for (let k = 0; k < 5; k++) Sf.box(0.5 + rnd() * 0.5, 0.4 + rnd() * 0.5, 0.3, x - 1.4 + k * 0.7, P + 0.3 + rnd() * 1.3, F + 0.12, pick(['#e8c82a', '#d84a3a', '#f2f2ee', '#3a8ad8', '#e88a2a', '#5aa83a']));
+      Gf.box(wd - 0.8, 1.0, 0.02, x, P + 2.0, F + 0.08, '#ffdf9a');
+    } else if (front < 0.68) { for (let k = 0; k < 9; k++) Sf.box(wd - 0.7, 0.26, 0.08, x, P + 0.14 + k * 0.28, F + 0.02, k % 2 ? '#a9adb2' : '#bfc3c7'); }
     else {
-      S.box(wd - 0.7, 2.5, 0.1, x, P + 1.25, F + 0.01, '#4a6a78');
-      for (const dx of [-0.5, -0.17, 0.17, 0.5]) S.box(0.09, 2.5, 0.12, x + dx * (wd - 0.7), P + 1.25, F + 0.03, '#d8dade');
-      Gl.box(wd - 0.9, 2.2, 0.02, x, P + 1.3, F + 0.07, '#ffe9b8');
+      Sf.box(wd - 0.7, 2.5, 0.1, x, P + 1.25, F + 0.01, '#4a6a78');
+      for (const dx of [-0.5, -0.17, 0.17, 0.5]) Sf.box(0.09, 2.5, 0.12, x + dx * (wd - 0.7), P + 1.25, F + 0.03, '#d8dade');
+      Gf.box(wd - 0.9, 2.2, 0.02, x, P + 1.3, F + 0.07, '#ffe9b8');
     }
     // вывеска-фриз; ночью светится
     // (у части лавок вывеска по-тайски: Натон — тайский город; выбор — по месту, не по общему счётчику случайностей)
     { const th = thaiOf(sign), useTh = th && hash2(Math.round(x * 10) + 3, Math.round((F + P) * 10)) < (st.thai ?? 0.6);
-      S.box(wd - 0.4, 0.72, 0.12, x, P + 2.98, F + 0.08, sc); Gl.box(wd - 0.4, 0.72, 0.02, x, P + 2.98, F + 0.15, sc);
-      if (useTh) { const pt = Math.min(0.045, (wd - 1) / hudWidth(hudText(th))); thaiText(S, th, x, P + 2.98, F + 0.16, pt, ink); thaiText(Gl, th, x, P + 2.98, F + 0.18, pt, ink); }
-      else { const px = Math.min(0.1, (wd - 1) / hudWidth(hudText(sign))); S.text(sign, x, P + 2.98 + px * 2.5, F + 0.16, px, ink, 1); Gl.text(sign, x, P + 2.98 + px * 2.5, F + 0.18, px, ink, 1); } }
+      Sf.box(wd - 0.4, 0.72, 0.12, x, P + 2.98, F + 0.08, sc); Gf.box(wd - 0.4, 0.72, 0.02, x, P + 2.98, F + 0.15, sc);
+      if (useTh) { const pt = Math.min(0.045, (wd - 1) / hudWidth(hudText(th))); thaiText(Sf, th, x, P + 2.98, F + 0.16, pt, ink); thaiText(Gf, th, x, P + 2.98, F + 0.18, pt, ink); }
+      else { const px = Math.min(0.1, (wd - 1) / hudWidth(hudText(sign))); Sf.text(sign, x, P + 2.98 + px * 2.5, F + 0.16, px, ink, 1); Gf.text(sign, x, P + 2.98 + px * 2.5, F + 0.18, px, ink, 1); } }
     // навес над тротуаром: полосатая маркиза или бетонный козырёк
     if (rnd() < 0.7) {
       const [c1, c2] = pick(AWNINGS);
-      for (let k = 0; k < 6; k++) S.quad([x - wd / 2 + k * wd / 6, P + 2.6, F + 0.1], [x - wd / 2 + (k + 1) * wd / 6, P + 2.6, F + 0.1], [x - wd / 2 + (k + 1) * wd / 6, P + 2.2, F + 2.25], [x - wd / 2 + k * wd / 6, P + 2.2, F + 2.25], k % 2 ? c1 : c2);
-    } else { S.box(wd, 0.14, 2.3, x, P + 3.42, F + 1.15, '#d4d1c8'); for (const dx of [-1, 1]) S.box(0.22, 3.3, 0.22, x + dx * (wd / 2 - 0.15), P + 1.7, F + 2.15, '#c9c5bb'); }
+      for (let k = 0; k < 6; k++) Sf.quad([x - wd / 2 + k * wd / 6, P + 2.6, F + 0.1], [x - wd / 2 + (k + 1) * wd / 6, P + 2.6, F + 0.1], [x - wd / 2 + (k + 1) * wd / 6, P + 2.2, F + 2.25], [x - wd / 2 + k * wd / 6, P + 2.2, F + 2.25], k % 2 ? c1 : c2);
+    } else { Sf.box(wd, 0.14, 2.3, x, P + 3.42, F + 1.15, '#d4d1c8'); for (const dx of [-1, 1]) Sf.box(0.22, 3.3, 0.22, x + dx * (wd / 2 - 0.15), P + 1.7, F + 2.15, '#c9c5bb'); }
+    if (sp) specialFront(sp, S, Gl, lot, x, wd, F, P);
     // верхние этажи: окна или лоджия с балюстрадой; кондиционеры; короб-вывеска поперёк улицы
     for (let k = 1; k < floors; k++) {
       const b = P + k * FL, bal = k === 1 ? rnd() < st.balcony : rnd() < st.balcony * 0.5;
@@ -162,6 +167,29 @@ function shophouseRow(lot, rnd, st) {
     if (st.roof === 'tile') {                                                                      // общая балконная плита и черепица
       S.gable(x, 0, w + 0.02, F + 0.9, P + H, P + H + 1.7, i % 2 ? '#84878a' : '#7c7f82', wall, 'x');
       for (const dz of [-1, 1]) S.box(w, 0.1, 0.12, x, P + H + 0.02, dz * (F + 0.85), '#6a6c6e');
+    }
+  }
+  // голые боковые стены (торцы ряда и выступ над соседом пониже): окна верхних этажей ближе к заду, кондиционеры, водосток;
+  // на части торцов — выцветшая реклама во всю стену. Выбор — по месту (hash2), общий счётчик случайностей не трогается
+  for (let i = 0; i < n; i++) {
+    const [x, wd, fl, H] = secs[i];
+    for (const sd of [-1, 1]) {
+      const nb = secs[i + sd], low = nb ? nb[2] : 0;
+      if (fl <= Math.max(1, low)) continue;
+      const xw = x + sd * wd / 2, end = !nb, hk = hash2(Math.round(x * 10) + sd * 7, Math.round(L * 10 + F * 3)), ad = end && fl >= 2 && hk < 0.35;
+      for (let k = Math.max(1, low); k < fl; k++) { const b = P + k * FL;
+        winX(S, xw, b + 1.75, -F * 0.5, 1.0, 1.3, sd, GLASS, '#d8dade');
+        if (end && !ad && D > 9 && hash2(k + 5, Math.round(hk * 1000)) < 0.5) winX(S, xw, b + 1.75, F * 0.2, 1.0, 1.3, sd, GLASS, '#d8dade');
+        if (hash2(k * 3 + sd, Math.round(x * 10) + 1) < 0.35) acX(S, xw, b + 0.6, -F * 0.5 + 1.4, sd);
+      }
+      if (end) S.box(0.1, H, 0.1, xw + sd * 0.06, P + H / 2, -F + 0.25, '#9a9c9e');
+      if (ad && !shipyard.dry) {
+        const [word, bg, ink] = WALL_ADS[Math.floor(hash2(Math.round(hk * 977), 3) * WALL_ADS.length)], aw = D * 0.42, zc = F - aw / 2 - 0.4, y0 = P + FL + 0.3, y1 = P + H - 0.5, ah = Math.min(3.2, y1 - y0), yc = y0 + ah / 2;
+        S.box(0.06, ah, aw, xw + sd * 0.03, yc, zc, bg);
+        const T = sculptor(), px = Math.min(0.32, (aw - 0.6) / hudWidth(hudText(word)));
+        T.text(word, 0, px * 2.5, 0.02, px, ink, 1);
+        const m = T.mesh(); m.rotation.y = sd * Math.PI / 2; m.position.set(xw + sd * 0.07, yc, zc); lot.g.add(m);
+      }
     }
   }
   // st.scooters — доля секций со скутером у бордюра (Чавенг, Ламай); выбор — по месту, общий счётчик случайностей не трогается
@@ -209,13 +237,20 @@ function fvRow(lot, rnd, sea) {
       S.box(2.3, 0.6, 0.08, x, P + 2.45, F + V - 0.25, sc); S.text(sign, x, P + 2.45 + px * 2.5, F + V - 0.2, px, ink, 1);
       Gl.box(2.3, 0.6, 0.02, x, P + 2.45, F + V - 0.2, sc); Gl.text(sign, x, P + 2.45 + px * 2.5, F + V - 0.18, px, ink, 1); }
     if (rnd() < 0.4) { S.box(0.1, 0.9, 0.9, x - wd / 2 + 0.2, P + 3.9, F + 0.9, pick(['#c8302a', '#f2ecd8', '#2a2a2c'])); Gl.box(0.12, 0.3, 0.3, x - wd / 2 + 0.2, P + 3.25, F + 0.9, '#ff5a3a'); }   // вывеска-консоль и красный фонарь
+    fvBoutique(lot, S, Gl, x, wd, F, P, V, sea, i);                                              // бутики, кафе, гирлянды (refs/fishermans_boutiques)
     // крыша: конёк вдоль улицы или фронтон на улицу
     if (rnd() < 0.72) S.gable(x, 0, w + 0.02, F + 0.7, P + 6.0, P + 8.1 + rnd() * 0.5, roof, up, 'x');
     else S.gable(x, 0, D + 1.2, w / 2 + 0.12, P + 6.0, P + 8.7, roof, up, 'z');
+    if (!sea && hash2(Math.round(x * 10), Math.round(L * 10) + 5) < 0.6) acZ(S, x + (hash2(i, 9) - 0.5) * (wd - 2), P + 4.0 + (hash2(i, 4) < 0.5 ? 0 : -2.4), -F, -1);   // кондиционер на задней стене
     if (sea) {                                                                                     // задняя стена открыта на террасу
       S.box(wd - 1.0, 2.5, 0.1, x, P + 1.25, -F - 0.01, '#231c1a'); Gl.box(wd - 1.2, 1.0, 0.02, x, P + 1.9, -F - 0.08, '#ffd98a');
       S.box(1.2, 1.2, 0.08, x, P + 4.6, -F - 0.02, '#2c3440');
     }
+  }
+  for (const sd of [-1, 1]) {                                                                     // торцы ряда: окно со ставнями на втором этаже и окошко внизу
+    const xw = sd * L / 2;
+    for (const z of [-F * 0.45, F * 0.3]) { winX(S, xw, P + 4.7, z, 0.8, 1.2, sd, '#2c3440', '#5a4636'); for (const q of [-1, 1]) S.box(0.05, 1.2, 0.36, xw + sd * 0.06, P + 4.7, z + q * 0.6, '#5a4636'); }
+    winX(S, xw, P + 1.8, -F * 0.3, 0.7, 0.8, sd, '#2c3440', '#5a4636');
   }
   if (sea) {                                                                                       // терраса на сваях над песком: перила, столики, зонты, лестница на пляж
     const zt = -F - T / 2, WD = '#7a5a40', WD_D = '#4a3628', xs = (rnd() - 0.5) * (L - 6);
@@ -235,6 +270,36 @@ function fvRow(lot, rnd, sea) {
   return townDone(lot, S, Gl, -F - T, F + V, V + 0.6);
 }
 
+// Бутики Рыбацкой деревни (refs/fishermans_boutiques): у части домов на веранде вешалки с пёстрой одеждой и яркая вывеска
+// бутика (названия — настоящие лавки деревни), у редких — красное кафе с золотыми статуями у входа; через дом — гирлянда
+// тёплых лампочек поперёк улицы до дома напротив. Выбор — по месту (hash2), общий счётчик случайностей не трогается.
+const FV_BOUTIQUES = [['CHANDRA', '#e8388a'], ['SAONA COLLECTION', '#2ab8b0'], ['PANU NATURAL', '#5aa83a'], ['NATURE JEWELLERY', '#8a3ab8'], ['KARMA SUTRA', '#e8388a'], ['ISLAND SILK', '#e8782a']];
+function fvBoutique(lot, S, Gl, x, wd, F, P, V, sea, i) {
+  const w = lot.g.localToWorld(new THREE.Vector3(x, 0, F)), h = hash2(Math.round(w.x), Math.round(w.z)), live = !shipyard.dry;
+  if (h < 0.38) {
+    const [name, col] = FV_BOUTIQUES[Math.floor(hash2(Math.round(w.z), 7) * FV_BOUTIQUES.length)], px = Math.min(0.06, (wd - 1.6) / hudWidth(hudText(name)));
+    S.box(wd - 1.2, 0.46, 0.06, x, P + 2.84, F + 0.07, col); Gl.box(wd - 1.2, 0.46, 0.02, x, P + 2.84, F + 0.11, col);
+    S.text(name, x, P + 2.84 + px * 2.5, F + 0.11, px, '#ffffff', 1); Gl.text(name, x, P + 2.84 + px * 2.5, F + 0.13, px, '#ffffff', 1);
+    if (live) for (const dx of [-1.0, 1.0]) templeProp(lot.g, x + dx, -(F + 0.55), (Q) => {                                    // вешалка с одеждой
+      for (const s of [-1, 1]) Q.box(0.04, 1.6, 0.04, s * 0.65, P + 0.8, 0, '#c8ccd0'); Q.box(1.36, 0.04, 0.04, 0, P + 1.6, 0, '#c8ccd0');
+      for (let k = 0; k < 7; k++) Q.box(0.07, 0.6 + hash2(k, Math.round(w.x + dx)) * 0.4, 0.3, -0.54 + k * 0.18, P + 1.25 - hash2(k + 3, 1) * 0.2, 0, ['#e8388a', '#f2c81e', '#2ab8b0', '#e8782a', '#f2f2ee', '#8a3ab8', '#2a6ad8', '#d42020'][(k + Math.round(h * 50)) % 8]);
+    }, { kind: 'small', mat: 'wood', color: '#e8388a', r: 0.7, loss: 0.02 });
+  } else if (h > 0.92) {                                                                        // красное кафе: рама, золотые статуи у входа
+    for (const s of [-1, 1]) S.box(0.5, 2.9, 0.1, x + s * (wd / 2 - 0.3), P + 1.45, F + 0.05, '#a8201a'); S.box(wd, 0.5, 0.1, x, P + 2.85, F + 0.05, '#a8201a');
+    { const px = Math.min(0.07, (wd - 1.4) / hudWidth(hudText('CAFE'))); S.text('CAFE', x, P + 2.85 + px * 2.5, F + 0.11, px, '#e8c25a', 1); Gl.text('CAFE', x, P + 2.85 + px * 2.5, F + 0.13, px, '#ffd98a', 1); }
+    if (live) for (const s of [-1, 1]) templeProp(lot.g, x + s * (wd / 2 - 0.6), -(F + 0.6), (Q) => {
+      Q.box(0.5, 0.5, 0.5, 0, P + 0.25, 0, '#a8201a'); Q.blob(0, P + 0.75, 0, 0.26, 0.22, 0.2, T_GOLD, 8, 4); Q.blob(0, P + 1.08, 0, 0.18, 0.2, 0.15, T_GOLD, 8, 4); Q.blob(0, P + 1.36, 0, 0.12, 0.13, 0.12, T_GOLD, 7, 4); Q.tube(0, P + 1.46, P + 1.62, 0, 0.05, 0.01, T_GOLD, 5);
+    }, { kind: 'small', mat: 'stone', color: T_GOLD, r: 0.4, loss: 0.03 });
+  }
+  if ((sea || lot.side > 0) && i % 2 === 0) {                                                   // гирлянда поперёк улицы — до фасада напротив
+    const z0 = F + 0.15, z1 = F + 2 * lot.FR - 0.15, y0 = P + 5.85, n = 12;
+    let prev = null;
+    for (let k = 0; k <= n; k++) { const t = k / n, z = z0 + (z1 - z0) * t, y = y0 - 0.9 * 4 * t * (1 - t), pt = [x, y, z];
+      if (prev) S.rod(prev, pt, 0.025, '#3a3a3c');
+      if (k > 0 && k < n) { S.box(0.1, 0.12, 0.1, x, y - 0.1, z, '#f2e6c8'); Gl.box(0.15, 0.17, 0.15, x, y - 0.1, z, '#ffd98a'); }
+      prev = pt; }
+  }
+}
 // ---------- Хуа Танон: дощатый дом на сваях у пляжа (веранда — к морю, от улицы) ----------
 function stiltRow(lot, rnd) {
   const { len: L, D } = lot, S = sculptor(), Gl = sculptor(), F = D / 2, P = 1.0, pick = (a) => a[(rnd() * a.length) | 0];
@@ -488,6 +553,11 @@ function buildHuaThanon() {
       S.box(24, 2.4, 16, 0, P - 1.2, 0, '#a8a59c'); townWalk(lot, S, 3.0, '#51724c');
       S.box(18, 7.6, 14, -2.5, P + 3.8, -0.6, WH); S.box(18.4, 0.3, 14.4, -2.5, P + 3.9, -0.6, '#bdbcb8');
       for (let x = -10.5; x <= 5.6; x += 2.3) for (const y of [1.9, 5.7]) { S.box(1.1, 1.7, 0.08, x, P + y, 6.43, '#2c3440'); S.blob(x, P + y + 0.85, 6.43, 0.55, 0.55, 0.05, '#2c3440', 8, 3); if ((x + y) % 2 > 1) Gl.box(1.0, 1.6, 0.02, x, P + y, 6.5, '#e8f0c8'); }
+      for (const y of [2.2, 5.8]) {                                                                     // узкие окна-бойницы по бокам и сзади (просил Влад)
+        for (let x = -10.4; x <= 5.5; x += 1.6) { S.box(0.32, 1.1, 0.08, x, P + y, -7.63, '#2c3440'); S.blob(x, P + y + 0.55, -7.63, 0.16, 0.16, 0.05, '#2c3440', 6, 3); }
+        for (const sx of [-11.53, 6.53]) for (let z = -6.4; z <= 5.2; z += 1.6) { S.box(0.08, 1.1, 0.32, sx, P + y, z, '#2c3440'); S.blob(sx, P + y + 0.55, z, 0.05, 0.16, 0.16, '#2c3440', 6, 3); }
+      }
+      for (const x of [-8.0, -1.6, 3.2]) acZ(S, x, P + 3.9, -7.6, -1);                               // кондиционеры сзади
       for (let x = -11.3; x <= 6.4; x += 1.1) S.box(0.14, 0.7, 0.14, x, P + 7.95, 6.3, WH); S.box(18, 0.1, 0.16, -2.5, P + 8.3, 6.3, WH);   // балюстрада по крыше
       S.lathe([[2.2, P + 7.6], [2.3, P + 8.4]], -2.5, -0.6, WH, 12); S.lathe([[2.3, P + 8.4], [2.75, P + 9.6], [2.3, P + 10.9], [1.0, P + 11.9], [0.1, P + 12.5]], -2.5, -0.6, GR, 12);   // купол-луковица
       S.tube(-2.5, P + 12.5, P + 13.6, -0.6, 0.07, 0.03, '#d8b24a', 5); S.blob(-2.5, P + 13.7, -0.6, 0.3, 0.3, 0.06, '#d8b24a', 8, 3);

@@ -67,19 +67,22 @@
 <script src="thai_text.js"></script>
 <script src="boats.js"></script>
 <script src="seatran_ferry.js"></script>
-<script src="engine_lab/data/beetle.js"></script>
-<script src="engine_lab/data/porsche911.js"></script>
-<script src="engine_lab/data/lancia_fiat.js"></script>
-<script src="engine_lab/data/wave.js"></script>
-<script src="engine_lab/data/dmax.js"></script>
-<script src="engine_lab/data/city.js"></script>
-<script src="engine_lab/data/evo.js"></script>
-<script src="engine_lab/data/impreza.js"></script>
-<script src="sound_data.js"></script>
+<!-- Звуковые данные (≈14 МБ записей) грузятся уже после первого кадра, по порядку (loadLaterScripts в основном скрипте):
+     type="text/later" браузер сам не грузит. Новый файл данных звука — так же, через data-src; код звука (sound.js,
+     birds.js, ambience.js) — обычным script: он маленький и нужен сразу. -->
+<script type="text/later" data-src="engine_lab/data/beetle.js"></script>
+<script type="text/later" data-src="engine_lab/data/porsche911.js"></script>
+<script type="text/later" data-src="engine_lab/data/lancia_fiat.js"></script>
+<script type="text/later" data-src="engine_lab/data/wave.js"></script>
+<script type="text/later" data-src="engine_lab/data/dmax.js"></script>
+<script type="text/later" data-src="engine_lab/data/city.js"></script>
+<script type="text/later" data-src="engine_lab/data/evo.js"></script>
+<script type="text/later" data-src="engine_lab/data/impreza.js"></script>
+<script type="text/later" data-src="sound_data.js"></script>
 <script src="sound.js"></script>
-<script src="birds_data.js"></script>
+<script type="text/later" data-src="birds_data.js"></script>
 <script src="birds.js"></script>
-<script src="ambience_data.js"></script>
+<script type="text/later" data-src="ambience_data.js"></script>
 <script src="ambience.js"></script>
 <script src="piers.js"></script>
 <script src="lomprayah.js"></script>
@@ -100,6 +103,8 @@
 <script src="jungle.js"></script>
 <script src="roadside.js"></script>
 <script src="beaches.js"></script>
+<script src="districts.js"></script>
+<script src="specialshops.js"></script>
 <script src="car_icons.js"></script>
 <script src="touch.js"></script>
 <script src="beetle.js"></script>
@@ -326,11 +331,11 @@ function lazyRun() {
   const px = camPos.x, pz = camPos.z;
   if (LAZY.last && Math.hypot(px - LAZY.last[0], pz - LAZY.last[1]) > 300) lazyFlush(px, pz, LAZY.near);   // перенеслись — всё в пределах видимости сразу
   LAZY.last = [px, pz];
-  while (LAZY.list.length && performance.now() < STILL.until) {
+  do {                                   // хотя бы одна постройка за кадр, дальше — пока есть время
     let bi = 0, bd = Infinity;
     for (let i = 0; i < LAZY.list.length; i++) { const d = (LAZY.list[i].x - px) ** 2 + (LAZY.list[i].z - pz) ** 2; if (d < bd) { bd = d; bi = i; } }
     lazyDo(bi);
-  }
+  } while (LAZY.list.length && performance.now() < STILL.until);
 }
 THREE.Object3D.prototype.updateMatrix = function () {
   const p = this.position, q = this.quaternion, s = this.scale, c = this._trs || (this._trs = new Float64Array(10).fill(NaN));
@@ -522,6 +527,7 @@ const HUD_GLYPH = {
   H: ['101', '101', '111', '101', '101'], '/': ['001', '001', '010', '100', '100'], ' ': ['000', '000', '000', '000', '000'],
 };
 Object.assign(HUD_GLYPH, { ':': ['0', '1', '0', '1', '0'], N: ['1001', '1101', '1011', '1001', '1001'] });
+HUD_GLYPH['$'] = ['0111', '1010', '0110', '0101', '1110'];                 // доллар — для табличек портных («45$»)
 // остальной алфавит (латиница и кириллица — только заглавные) и знаки: для меню радио и подписей
 Object.assign(HUD_GLYPH, {
   A: ['010', '101', '111', '101', '101'], B: ['110', '101', '110', '101', '110'], C: ['011', '100', '100', '100', '011'],
@@ -838,7 +844,7 @@ const beachSand = (() => {
   const cellKey = (cx, cz) => (cx + 32768) * 65536 + cz + 32768;                // ключ клетки — число (строки на каждой вершине рельефа обходились в секунды загрузки)
   const fboxes = [];                                                            // габариты каждого пляжа «с песком до дороги»: вне их искать нечего
   const grow = (b, x, z) => { b[0] = Math.min(b[0], x); b[1] = Math.max(b[1], x); b[2] = Math.min(b[2], z); b[3] = Math.max(b[3], z); };
-  for (const b of IS.beaches || []) { const c = new THREE.Color(BEACH_SAND[b.id] || '#f6d37a'), fbox = [Infinity, -Infinity, Infinity, -Infinity]; c.wall = !!b.wall; if (b.full) fboxes.push(fbox); for (const [x, z, nx, nz, dr] of b.pts) {
+  for (const b of IS.beaches || []) { const c = new THREE.Color(BEACH_SAND[b.id] || '#f6d37a'), fbox = [Infinity, -Infinity, Infinity, -Infinity]; c.wall = !!b.wall; c.top = BEACH_TOP[b.id] || 1.6; if (b.full) fboxes.push(fbox); for (const [x, z, nx, nz, dr] of b.pts) {
     for (const d of [0, 30]) {
       const key = cellKey(Math.floor((x + nx * d) / CELL), Math.floor((z + nz * d) / CELL));
       if (!cells.has(key)) cells.set(key, []);
@@ -865,7 +871,7 @@ const beachSand = (() => {
     if (h <= -0.7) return null;
     const wet = h < 0 ? Math.max(0, 1 + h / 0.7) : 1, f = fcells.size ? full(x, z) : null;
     if (f) return { c: f, k: wet };
-    if (h < 1.6) { const c = near(x, z); if (c) return { c, k: Math.min(1, (1.6 - h) / 0.5) * wet }; }
+    if (h < 2.6) { const c = near(x, z); if (c && h < c.top) return { c, k: Math.min(1, (c.top - h) / 0.5) * wet }; }   // top — до какой высоты песок (у бухт под склоном выше)
     return null;
   };
   fn.full = full;
@@ -948,10 +954,11 @@ const TERRAIN_FAR = 1650, terrainBlocks = [];
   }
 }
 function updateTerrainFar() {
+  let built = false;                                       // заранее (пока блок ещё грубый) — хотя бы один кусок за кадр, дальше — пока есть время
   for (const b of terrainBlocks) {
     const d = Math.hypot(b.x - camPos.x, b.z - camPos.z) - b.r, far = d > TERRAIN_FAR;
-    if (d < TERRAIN_FAR + 500 && b.chunks.some(c => !c.mesh) && (!far || performance.now() < STILL.until))   // подробные куски — заранее, пока блок ещё грубый; подошли вплотную — сразу
-      for (const c of b.chunks) if (!c.mesh) terrainChunkMesh(c).visible = !b.far;
+    if (d < TERRAIN_FAR + 500) for (const c of b.chunks)   // подробные куски; подошли вплотную — все сразу
+      if (!c.mesh && (!far || !built || performance.now() < STILL.until)) { terrainChunkMesh(c).visible = !b.far; built = true; }
     if (far === b.far) continue;
     b.far = far; b.mesh.visible = far;
     for (const c of b.chunks) if (c.mesh) c.mesh.visible = !far;
@@ -2545,7 +2552,9 @@ function breakCheck() {
   for (let ax = cx - 1; ax <= cx + 1; ax++) for (let az = cz - 1; az <= cz + 1; az++) {
     const cell = breakCells.get(ax + ',' + az);
     if (!cell) continue;
-    for (const b of cell.slice()) {                                    // (копия: удар может снять предметы из этой же ячейки)
+    let list = cell;                                                   // копия ячейки — только перед ударом (он может снять предметы из этой же ячейки), а не на каждом шаге
+    for (let k = 0; k < list.length; k++) {
+      const b = list[k];
       if (!b.alive || b.seen === breakStamp) continue;
       b.seen = breakStamp;
       let d = Infinity;
@@ -2555,7 +2564,7 @@ function breakCheck() {
           d = Math.min(d, Math.hypot(P[i] - (x1 + wx * t), P[i + 1] - (z1 + wz * t)) - 0.06);
         } else d = Math.min(d, Math.hypot(P[i] - b.x, P[i + 1] - b.z) - b.r);
       }
-      if (d < HIT_R && fast && Math.abs(car.speed) > BREAK_SPEED && !b.solid) { if (b.bump) b.bump(); else smash(b); continue; }   // (скорость — сейчас: после удара о стоящую машину следующая в этом шаге не бьётся)     // bump — стоящая машина или скутер: не ломается, а отлетает (vehicles.js);                  // solid — большое дерево: не ломается никогда
+      if (d < HIT_R && fast && Math.abs(car.speed) > BREAK_SPEED && !b.solid) { if (list === cell) list = cell.slice(); if (b.bump) b.bump(); else smash(b); continue; }   // (скорость — сейчас: после удара о стоящую машину следующая в этом шаге не бьётся)     // bump — стоящая машина или скутер: не ломается, а отлетает (vehicles.js);                  // solid — большое дерево: не ломается никогда
       if (!b.seg && d < 8) breakWalls.push([b.x - b.r, b.z, b.x + b.r, b.z], [b.x, b.z - b.r, b.x, b.z + b.r]);
     }
   }
@@ -2705,7 +2714,7 @@ function buildRadarSite(LAY) {
   const [hu, hv] = LAY.house;
   lbox(14, 4, 8, 0xdcd8cc, hu, 2, hv);
   lbox(14.2, 0.3, 8.2, 0xc8c4b8, hu, 4.15, hv);
-  lbox(10, 0.9, 0.1, 0x3e4858, hu - 1, 2.6, hv - 4.05);
+  lbox(10, 0.9, 0.1, 0x3e4858, hu - 1, 2.6, hv - 4.05); lbox(10, 0.9, 0.1, 0x3e4858, hu, 2.6, hv + 4.05);   // окна с обеих длинных сторон
   lbox(1.2, 2.2, 0.1, 0x4a4a48, hu + 6, 1.1, hv - 4.05);
   lbox(2, 1, 1.5, 0x9a9a96, hu - 4, 4.8, hv + 1);
   // контейнеры (третье число — высота, на которой стоит: второй ярус)
@@ -3092,7 +3101,7 @@ function buildAirport() {
   // ---- диспетчерская вышка: здание, стеклянная кабина, крыша, мачта, маяк, анемометр
   const tu = -95, tv = 180;
   lbox(7, 8, 7, 0xdcd8cc, tu, 4, tv);
-  for (const y of [2.2, 5.4]) lbox(5, 1.1, 7.05, 0x3e4858, tu, y, tv);       // окна этажей
+  for (const y of [2.2, 5.4]) { lbox(5, 1.1, 7.05, 0x3e4858, tu, y, tv); lbox(7.05, 1.1, 5, 0x3e4858, tu, y, tv); }   // окна этажей на все четыре стороны
   lbox(1.3, 2.3, 0.1, 0x4a4a48, tu + 2, 1.15, tv - 3.55);                     // дверь
   lbox(8.2, 0.5, 8.2, 0xb9b4a8, tu, 8.25, tv);                                // балкон
   lbox(7, 3, 7, 0x2c3a4c, tu, 10, tv);                                        // стеклянная кабина
@@ -3118,6 +3127,7 @@ function buildAirport() {
   airportAnim.push(t => { cups.rotation.y = t * 5.5; });
   lbox(9, 3, 3.2, 0xe8e6de, tu + 28, 1.5, tv - 8);                            // бытовка рядом
   lbox(8, 0.9, 3.25, 0x3e4858, tu + 28, 1.9, tv - 8);
+  for (const [x, y, z, w, d] of [[tu + 3.67, 3.6, tv - 1.5, 0.32, 0.9], [tu + 3.67, 6.8, tv + 1.5, 0.32, 0.9], [tu + 32.67, 1.0, tv - 8, 0.32, 0.9]]) lbox(w, 0.62, d, 0xd8dade, x, y, z);   // кондиционеры на вышке и бытовке
 
   // ---- обзорный радар на решётчатой мачте (вращается, в стиле станции локаторов)
   const ru = -135, rv2 = 205;
@@ -3506,6 +3516,8 @@ buildHotels();                           // отели Jinta, Lolita, Bhundhari 
 buildTowns();                            // Натон, Рыбацкая деревня, Хуа Танон (towns.js), центры Чавенга и Ламая (chaweng.js, lamai.js)
 buildSights();                           // Хин Та и Хин Яй, Лад Ко, Као Пом, чайнатаун Маенама, Ват На Пхра Лан (sights.js)
 buildBeaches();                          // пляжи Чавенг, Ламай, Чонг Мон, Силвер; Бопхут и Маенам — оформление (beaches.js)
+buildDistricts();                        // недоработанные районы: бары северо-востока, юг, больница, Big C (districts.js)
+buildSpecialShops();                     // особые магазины: музыка, портные, тату, змеи, прокат (specialshops.js)
 buildRoadside();                         // столбы с проводами, лавки в посёлках, указатели, стоянки у плантаций (roadside.js)
 // аэродром и станции локаторов за дымкой тоже не рисуются — вместе с пирсами (far — дальность с запасом на размер объекта)
 for (const [g, far] of [[airportGroup, 2250], ...radarSites.map(g => [g, 1750])]) { g.userData.c = g.getWorldPosition(new THREE.Vector3()); g.userData.far = far; pierGroups.push(g); }
@@ -4082,9 +4094,9 @@ const VEG = { job: null, last: null, start: null, step: null, drop: null, built:
   // сборка клетки: растения строятся в том порядке, в каком были посажены, каждое — со своего места в ряду случайных чисел
   VEG.start = (c) => ({ c, i: 0, bufs: Object.fromEntries(BUFS.map(k => [k, vegBuf()])), trees: [], t: 0 });
   VEG.step = (job, until) => {             // true — клетка готова
-    const t0 = performance.now(), { c, bufs } = job, P = c.plants;
+    const t0 = performance.now(), { c, bufs } = job, P = c.plants, i0 = job.i;
     for (; job.i < P.length; job.i += 4) {
-      if ((job.i & 31) === 0 && performance.now() >= until) { job.t += performance.now() - t0; return false; }
+      if (job.i !== i0 && (job.i & 31) === 0 && performance.now() >= until) { job.t += performance.now() - t0; return false; }   // (хотя бы несколько растений за вызов)
       if (c.broken.has(job.i)) continue;                   // сломано до выгрузки клетки
       const x = P[job.i], z = P[job.i + 1], fn = P[job.i + 2], from = BUFS.map(k => bufs[k].pos.length);
       fn(bufs, seededRandom(P[job.i + 3]), x, z);
@@ -4200,7 +4212,7 @@ function updateVegChunks() {
       else if (d < nd && !(VEG.job && VEG.job.c === c)) { nd = d; next = c; }
     }
   }
-  while (performance.now() < until) {
+  for (let first = true; first || performance.now() < until; first = false) {   // хотя бы один шаг за кадр, дальше — пока есть время
     if (!VEG.job) { if (!next) break; VEG.job = VEG.start(next); next = null; }
     if (VEG.step(VEG.job, until)) VEG.job = null; else break;
     if (!next) break;
@@ -4722,7 +4734,6 @@ addEventListener('keydown', e => {
   if (!e.repeat && radioKeys(e)) return;   // пауза — не перезапускать музыку
   startMusic(); soundStart();              // звук мотора, шин и моря (sound.js) — после первого нажатия
   if (!e.repeat && soundKeys(e)) return;   // громкость звука: «−», «=», M
-  if (e.code === 'KeyF' && !e.repeat) startWarp();     // поездка в ангар
   if (e.code === 'KeyO' && !e.repeat) { autopilot.on = !autopilot.on; if (autopilot.on) autopilotResync(); }
   if (e.code === 'KeyC' && !e.repeat) nextCar(1);       // следующая машина
   keys[e.code] = true; if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
@@ -4810,50 +4821,7 @@ function autopilotInput(dt) {
   return { steer, gas: Math.min(1, Math.max(0, dv * 0.4)), brake: dv < -1 ? Math.min(0.35, -dv * 0.08) : 0 };   // мягко, ~5 м/с² максимум
 }
 
-// ---------- F: поездка в ангар на ~1000 км/ч ----------
-// Маршрут: по кольцевой в своей полосе до съезда на дорогу 4171 -> по ней -> гравийка -> ворота -> перрон -> в ангар.
-// Разгон резкий, торможение плавное, остановка у саунд-системы. Повторное F — прервать. В ангаре F ничего не делает.
-const WARP_SPEED = 1000 / 3.6, WARP_ACCEL = 60, WARP_DECEL = 36;   // 1000 км/ч, м/с²
-let warp = null;
-function inHangar() {
-  if (!airportGroup) return false;
-  const p = airportGroup.worldToLocal(V3(car.x, 0, car.z));
-  return Math.abs(p.x - HANGAR.u) < HANGAR.HL / 2 && Math.abs(-p.z - HANGAR.v) < HANGAR.R;
-}
-function startWarp() {
-  if (warp) { warp = null; car.speed = Math.min(car.speed, CAR.maxSpeed); return; }   // прервать: дальше с обычной скоростью, без клевка
-  if (!airportGroup || inHangar()) return;               // уже в ангаре — ехать некуда
-  const ei = Math.round(AP.routeRing * SEG) % SEG, bi = nearestFrameIdx(car.x, car.z);
-  const pts = [V3(car.x, 0, car.z)];
-  const ahead = ((ei - bi) % SEG + SEG) % SEG;             // вперёд по ходу, с переходом через старт
-  for (let j = 6; j < ahead - 4; j += 6) {
-    const f = frames[(bi + j) % SEG];
-    pts.push(V3(f.p.x + f.side.x * LANE_OFFSET, 0, f.p.z + f.side.z * LANE_OFFSET));
-  }
-  for (let i = 3; i < AP.route.length - 2; i += 3) pts.push(V3(AP.route[i][0], 0, AP.route[i][1]));   // по дороге 4171
-  for (const [x, z] of AP.access.slice(1)) pts.push(V3(x, 0, z));                                       // гравийка к воротам
-  for (const [u, v] of [[-40, 172], [20, 186], [77, 186], [101, 186]]) {                               // перрон, ангар — до ~8 м от саунд-системы
-    const w = airportGroup.localToWorld(V3(u, 0, -v));
-    pts.push(V3(w.x, 0, w.z));
-  }
-  const path = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
-  path.arcLengthDivisions = pts.length * 16;             // мелкая разбивка длины: иначе у финиша скорость идёт рывками
-  warp = { path, len: path.getLength(), d: 0, v: Math.max(0, car.speed) };
-  autopilot.on = false;
-}
-function warpStep(dt) {
-  const w = warp, left = w.len - w.d;
-  const vMax = Math.min(WARP_SPEED, Math.sqrt(2 * WARP_DECEL * Math.max(0, left)));   // успеть остановиться
-  w.v = Math.min(vMax, w.v + WARP_ACCEL * dt);
-  w.d = Math.min(w.len, w.d + w.v * dt);
-  const u = w.d / w.len, p = w.path.getPointAt(u), tg = w.path.getTangentAt(u);
-  car.x = p.x; car.z = p.z;
-  car.heading = car.course = Math.atan2(-tg.x, -tg.z);
-  car.slip = 0; car.speed = w.v; car.steer = 0; car.yawRate = 0; car.gas = 0; car.brake = 0;
-  const sm = 1 - Math.exp(-dt / 0.3);                      // кузов выравнивается
-  car.accel -= car.accel * sm; car.roll -= car.roll * sm; car.pitch -= car.pitch * sm;
-  if (left < 0.05 || (w.v < 0.2 && left < 3)) { warp = null; car.speed = 0; }   // приехали
-}
+// (поездка в ангар по F убрана по просьбе Влада)
 
 // ---------- Столкновения ----------
 // Машина — два круга, спереди и сзади. Круг, зашедший в стену, выталкивается; по новым положениям кругов
@@ -4955,7 +4923,7 @@ function paceFactor() {
 // ---------- Физика ----------
 function update(dt) {
   let skid = false;
-  if (warp) warpStep(dt); else skid = drive(dt);
+  skid = drive(dt);
   if (headGlow.visible) updateBeams();
 
   const m = musicPose(musicNow());
@@ -4988,7 +4956,8 @@ function update(dt) {
   updateDust(dt, skid);
   for (const f of airportAnim) f(performance.now() / 1000);
   updateDebris(dt); updateFallers(dt); updateBlasts(dt); updateTossed(dt);
-  soundUpdate(dt);
+  try { soundUpdate(dt); }                 // ошибка в звуке не должна останавливать игру (кадр иначе замирает навсегда)
+  catch (e) { if (!update.soundErr) { update.soundErr = true; console.error('звук:', e); } }
 }
 // Езда под управлением игрока или автопилота; возвращает, оставлять ли следы шин.
 // Занос: нос машины (heading) и её ход (course) — разные углы. Шины тянут ход к носу, но не сильнее сцепления.
@@ -5294,11 +5263,8 @@ function spawnFlock() {
 }
 function updateBirds(dt, time) {
   if ((nextFlock -= dt) <= 0) {
-    if (warp) nextFlock = 3;             // на 1000 км/ч не до птиц — чуть позже
-    else {
-      spawnFlock();
-      nextFlock = BIRD_EVERY[0] + Math.random() * (BIRD_EVERY[1] - BIRD_EVERY[0]);
-    }
+    spawnFlock();
+    nextFlock = BIRD_EVERY[0] + Math.random() * (BIRD_EVERY[1] - BIRD_EVERY[0]);
   }
   const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw), rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
   const kOut = viewHalfTan() * 1.1;
@@ -5583,7 +5549,7 @@ const JUNCTION_PLACES = [];              // по одному стыку каж�
   // (переход «ВЕРШИНА» заменён: на вершине теперь станция Као Пом, к ней и к началу серпантина — свои переходы из sights.js)
 }
 function teleport(p) {
-  warp = null; autopilot.on = false;
+  autopilot.on = false;
   Object.assign(car, { x: p.x, z: p.z, heading: p.heading, course: p.heading, slip: 0, spun: false, speed: 0, steer: 0, yawRate: 0, gas: 0, brake: 0, kick: null, air: 0, vy: 0 });
   camYaw = p.heading; bananaPrev.x = null;
 }
@@ -5641,7 +5607,7 @@ function mergeSetup() {
 // материал сводного меша для материалов без текстур: всё, кроме цвета, — как у исходного
 function mergeMat(m, key) {
   let b = MERGE.mats.get(key);
-  if (!b) MERGE.mats.set(key, b = new THREE.MeshLambertMaterial({ vertexColors: true, side: m.side, flatShading: m.flatShading, emissive: m.emissive.clone(), emissiveIntensity: m.emissiveIntensity,
+  if (!b) MERGE.mats.set(key, b = new THREE.MeshLambertMaterial({ vertexColors: true, side: m.side, emissive: m.emissive.clone(), emissiveIntensity: m.emissiveIntensity,
     alphaTest: m.alphaTest, polygonOffset: m.polygonOffset, polygonOffsetFactor: m.polygonOffsetFactor, polygonOffsetUnits: m.polygonOffsetUnits, depthWrite: m.depthWrite, depthTest: m.depthTest, fog: m.fog, wireframe: m.wireframe }));
   return b;
 }
@@ -5664,7 +5630,7 @@ function mergeStart(E) {
     if (!o.visible || (o !== g && (MERGE.own.has(o) || o._movedAt > E.since))) return;       // спрятано; вложенная группа со своей дальностью; движется
     if (o.isMesh && mergeOk(o)) {
       const m = o.material, a = o.geometry.attributes, bake = !(m.map || m.alphaMap || m.emissiveMap || m.specularMap || m.envMap);
-      const key = bake ? 'bake|' + [m.side, m.flatShading, m.emissive.getHex(), m.emissiveIntensity, m.alphaTest, m.polygonOffset ? m.polygonOffsetFactor + ':' + m.polygonOffsetUnits : '', m.depthWrite, m.depthTest, m.fog, m.wireframe, o.renderOrder].join('|') : m.uuid + '|' + o.renderOrder;
+      const key = bake ? 'bake|' + [m.side, m.emissive.getHex(), m.emissiveIntensity, m.alphaTest, m.polygonOffset ? m.polygonOffsetFactor + ':' + m.polygonOffsetUnits : '', m.depthWrite, m.depthTest, m.fog, m.wireframe, o.renderOrder].join('|') : m.uuid + '|' + o.renderOrder;
       let s = sets.get(key);
       if (!s) sets.set(key, s = { mat: bake ? mergeMat(m, key) : m, bake, order: o.renderOrder, list: [], nv: 0, ni: 0 });
       s.list.push(o); s.nv += a.position.count; s.ni += o.geometry.index ? o.geometry.index.count : a.position.count;
@@ -5685,10 +5651,12 @@ function mergeStart(E) {
 }
 function mergeStep(job, until) {           // true — работа закончена (меши в сцене или сборка отменена)
   const E = job.E;
+  let first = true;                                                // хотя бы один меш за вызов
   for (; job.si < job.sets.length; job.si++) {
     const s = job.sets[job.si], { P, N, C, U, I } = s;
     for (; s.at < s.list.length; s.at++) {
-      if (performance.now() >= until) return false;
+      if (!first && performance.now() >= until) return false;
+      first = false;
       const o = s.list[s.at], a = o.geometry.attributes, pa = a.position.array, na = a.normal.array, n = a.position.count, e = o.matrixWorld.elements, v = s.v;
       const nm = MERGE.m3.getNormalMatrix(o.matrixWorld).elements, flip = o.matrixWorld.determinant() < 0;   // зеркальный меш — грани в другую сторону
       for (let i = 0, j = v * 3; i < n * 3; i += 3, j += 3) {
@@ -5761,6 +5729,7 @@ function mergeTouch(g) {
 }
 function mergeUpdate() {
   const until = Math.min(performance.now() + 3, STILL.until);    // на сборку — не больше 3 мс кадра
+  let stepped = !!MERGE.job;                                      // сборка за этот кадр уже продвинулась (новую тогда — только если есть время)
   if (MERGE.job && mergeStep(MERGE.job, until)) MERGE.job = null;
   for (const E of MERGE.list) {
     if (E.g && !inScene(E.g)) {                                  // группа далеко: её не видно
@@ -5776,7 +5745,8 @@ function mergeUpdate() {
     if (E.proxies) {
       if ((car.x - E.x) ** 2 + (car.z - E.z) ** 2 < (E.r + 150) ** 2 && mergeSig(E) !== E.sig) { mergeDrop(E); E.retry = STILL.frame + 150; continue; }   // рядом что-то сломали
       if (!E.shown) { for (const m of E.proxies) m.visible = true; E.shown = true; }
-    } else if (!MERGE.job && STILL.frame >= E.since + 3 && STILL.frame >= E.retry && performance.now() < until) {
+    } else if (!MERGE.job && STILL.frame >= E.since + 3 && STILL.frame >= E.retry && (!stepped || performance.now() < until)) {
+      stepped = true;
       if ((MERGE.job = mergeStart(E)) && mergeStep(MERGE.job, until)) MERGE.job = null;
     }
   }
@@ -5813,9 +5783,24 @@ let last = performance.now();
 radioInit();
 updateSky(0, 0);
 updateCamera(0, true);
+// Звуковые данные — после первого кадра (теги script type="text/later" в начале страницы), строго по порядку: записи
+// моторов, потом sound_data.js — когда он есть, всё для мотора, шин и моря на месте. Если человек уже нажимал клавишу
+// или касался экрана, пока данные качались, звук запускается сам; птицы и фон подключаются, как только пришли их записи.
+function loadLaterScripts() {
+  for (const tag of document.querySelectorAll('script[type="text/later"]')) {
+    const s = document.createElement('script'), src = tag.dataset.src;
+    s.src = src; s.async = false;
+    s.onload = () => {
+      if (src === 'sound_data.js' && navigator.userActivation && navigator.userActivation.hasBeenActive) soundStart();
+      if (SOUND.ready && src === 'birds_data.js' && !SOUND.busBirds && typeof birdsStart === 'function') birdsStart();
+      if (SOUND.ready && src === 'ambience_data.js' && !SOUND.busAmb && typeof ambienceStart === 'function') ambienceStart();
+    };
+    s.onerror = () => console.warn('звук: не загрузился ' + src);
+    document.body.appendChild(s);
+  }
+}
 function frame(now) {
-  if (++STILL.frame === 2) { const l = document.getElementById('loading'); if (l) l.remove(); }
-  STILL.until = performance.now() + 7;     // на всю подгрузку вместе — не больше 7 мс кадра
+  if (++STILL.frame === 2) { const l = document.getElementById('loading'); if (l) l.remove(); loadLaterScripts(); }
   fpsTick(now);
   liveAnalyse();
   // не меньше нуля: отметка первого кадра бывает раньше конца загрузки, а шаг назад во времени ломает физику
@@ -5825,6 +5810,10 @@ function frame(now) {
   updateCamera(dt, false);
   updateBananas(dt, now / 1000);
   updateBirds(dt, now / 1000);
+  // Подгрузка (растения, лес, рельеф, отложенные постройки, сводные меши): вместе — не больше 7 мс, считая отсюда, а не от
+  // начала кадра. Если время уже вышло, каждая часть всё равно делает хотя бы один шаг — иначе на медленном устройстве,
+  // где физика и небо сами съедают 7 мс, мир вокруг перестал бы достраиваться совсем.
+  STILL.until = performance.now() + 7;
   updateVegChunks();
   updateJungle();
   updatePiers(now / 1000);

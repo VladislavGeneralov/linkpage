@@ -6,7 +6,7 @@
 // Время — dayTime игры; место — те же зоны, что у птиц (birdZones в birds.js). Переходы — плавные, за 2–4 с.
 // Файл подключается после birds.js; sound.js зовёт ambienceStart() и ambienceUpdate(dt).
 
-const AMB = { loops: {}, shots: {}, next: { tokay: 0, house_gecko: 0 }, active: 0, zones: null, zonesAt: -1, log: [] };
+const AMB = { loops: {}, data: {}, quiet: {}, loading: {}, shots: {}, next: { tokay: 0, house_gecko: 0 }, active: 0, zones: null, zonesAt: -1, env: null, marks: null, log: [] };   // env — место машины: высота, дорога, рынок, открытость (раз в 1,5 с)
 // насколько слышна каждая петля в зоне (берётся наибольшее по зонам, где стоит машина)
 const AMB_ZONE = {
   cicada: { forest: 1, thicket: 0.85, plantation: 0.45, field: 0.35, village: 0.22, coast: 0.18 },
@@ -19,9 +19,29 @@ async function ambienceStart() {
   if (!D || !S.ctx) return;
   S.busAmb = S.ctx.createGain(); S.busAmb.gain.value = MIX.ambience; S.busAmb.connect(S.lim);
   { const a = S.ctx.createAnalyser(); a.fftSize = 16384; S.busAmb.connect(a); S.busAmb.meter = a; }   // для проверок уровня
-  for (const [k, d] of Object.entries(D.loops)) { try { AMB.loops[k] = soundLoop(await soundDecode(d.mp3), [0, d.dur], S.busAmb); } catch (e) { /* без этой петли */ } }
-  for (const [k, d] of Object.entries(D.shots)) { try { AMB.shots[k] = { buf: await soundDecode(d.mp3), clips: d.clips }; } catch (e) { /* без этого голоса */ } }
+  // Петля расшифровывается (в несжатый звук, это десятки МБ на петлю), только когда её должно быть слышно, и уходит из
+  // памяти, когда её не слышно уже AMB_FREE секунд (ambLoopNeed). Раньше все петли расшифровывались сразу — около 144 МБ.
+  // Ветер слышен всегда — он сразу.
+  AMB.data = D.loops;
+  if (D.loops.wind) { try { AMB.loops.wind = soundLoop(await soundDecodeNative(D.loops.wind.mp3, true), [0, D.loops.wind.dur], S.busAmb); } catch (e) { /* без ветра */ } }   // петли — моно и в родной частоте (32 кГц): решение Влада
+  for (const [k, d] of Object.entries(D.shots)) { try { AMB.shots[k] = { buf: await soundDecodeNative(d.mp3), clips: d.clips }; } catch (e) { /* без этого голоса */ } }
   const now = S.ctx.currentTime; AMB.next.tokay = now + 20 + Math.random() * 60; AMB.next.house_gecko = now + 8 + Math.random() * 20;
+}
+const AMB_FREE = 30;                     // с — столько петля должна молчать, чтобы уйти из памяти (снова понадобится — расшифруется за доли секунды)
+// петля k должна звучать с громкостью v: нет её в памяти — расшифровать и запустить (громкость поднимется плавно, как и
+// раньше: петля начинает с нуля); молчит дольше AMB_FREE — остановить и забыть
+function ambLoopNeed(k, v, now) {
+  const L = AMB.loops, d = AMB.data[k];
+  if (v > 0.002) {
+    AMB.quiet[k] = now;
+    if (!L[k] && d && !AMB.loading[k]) {
+      AMB.loading[k] = true;
+      soundDecodeNative(d.mp3, true).then((buf) => { L[k] = soundLoop(buf, [0, d.dur], SOUND.busAmb); }).catch(() => { AMB.data[k] = null; }).finally(() => { AMB.loading[k] = false; });
+    }
+  } else if (L[k] && k !== 'wind' && now - (AMB.quiet[k] || 0) > AMB_FREE) {
+    try { L[k].src.stop(); } catch (e) {}
+    L[k].src.disconnect(); delete L[k];
+  }
 }
 const ambZone = (tbl) => { let k = 0; for (const z of AMB.zones) if (tbl[z] > k) k = tbl[z]; return k; };
 // разовый голос в точке вокруг машины: d — расстояние, м
@@ -41,15 +61,22 @@ function ambienceUpdate(dt) {
   const S = SOUND, L = AMB.loops;
   if (!S.busAmb || !L.wind || typeof dayTime === 'undefined' || typeof birdZones !== 'function') return;
   const now = S.ctx.currentTime, h = ((dayTime % 24) + 24) % 24, kmh = Math.abs(car.speed) * 3.6;
-  if (now - AMB.zonesAt > 1.5 || !AMB.zones) { AMB.zones = birdZones(car.x, car.z); AMB.zonesAt = now; }
+  // зоны и место — раз в 1,5 с (зоны берутся у птиц, если те посчитали их только что), а не каждый кадр
+  if (now - AMB.zonesAt > 1.5 || !AMB.zones || !AMB.env) {
+    const B = typeof BIRDS_ST !== 'undefined' ? BIRDS_ST : null;
+    AMB.zones = B && B.zones && now - B.zonesAt < 1.5 && now >= B.zonesAt ? B.zones : birdZones(car.x, car.z); AMB.zonesAt = now;
+    if (!AMB.marks) {                                                                         // ночные рынки и чайнатаун Маенама
+      AMB.marks = (IS.markets || []).map((m) => [m.x, m.z]);
+      if (IS.spots && IS.spots.maenam_china) AMB.marks.push([IS.spots.maenam_china.x, IS.spots.maenam_china.z]);
+    }
+    let mk = 0;                                                                               // рынок: в 60–150 м от него
+    for (const [x, z] of AMB.marks) mk = Math.max(mk, Math.min(1, Math.max(0, (150 - Math.hypot(car.x - x, car.z - z)) / 90)));
+    const Z = AMB.zones;
+    AMB.env = { gy: groundY(car.x, car.z), road: roadDist(car.x, car.z) < 18 ? 0.7 : 1, mk,   // у самой дороги джунгли тише
+      open: Z.has('coast') || Z.has('field') || Z.has('hills') || pierYAt(car.x, car.z) !== null };
+  }
   const Z = AMB.zones, W = (win) => birdHourWeight(win, h), move = Math.max(0.4, 1 - kmh / 120);   // на ходу фон уходит под мотор
-  const gy = groundY(car.x, car.z), road = roadDist(car.x, car.z) < 18 ? 0.7 : 1;             // у самой дороги джунгли тише
-  // рынок: в 60–150 м от ночных рынков и чайнатауна Маенама
-  let mk = 0;
-  const marks = (IS.markets || []).map((m) => [m.x, m.z]);
-  if (IS.spots && IS.spots.maenam_china) marks.push([IS.spots.maenam_china.x, IS.spots.maenam_china.z]);
-  for (const [x, z] of marks) mk = Math.max(mk, Math.min(1, Math.max(0, (150 - Math.hypot(car.x - x, car.z - z)) / 90)));
-  const open = Z.has('coast') || Z.has('field') || Z.has('hills') || pierYAt(car.x, car.z) !== null;
+  const { gy, road, mk, open } = AMB.env;
   const g = {
     cicada_dusk: W([[17.5, 19, 1], [5.25, 6.5, 0.7]]) * ambZone(AMB_ZONE.cicada) * (Z.has('hills') ? 1.25 : 1),
     cicada_noon: W([[11, 15, 1]]) * ambZone(AMB_ZONE.cicada) * (Z.has('hills') ? 1.2 : 1),
@@ -59,7 +86,7 @@ function ambienceUpdate(dt) {
     village: Z.has('village') ? W([[5.5, 19.5, 1]]) : 0,
     market: W([[17.5, 23, 1]]) * mk,
   };
-  for (const k in g) if (L[k]) L[k].gain.setTargetAtTime(Math.min(1, g[k]) * AMB_LEVEL[k] * move, now, 1.0);
+  for (const k in g) { const v = Math.min(1, g[k]) * AMB_LEVEL[k] * move; ambLoopNeed(k, v, now); if (L[k]) L[k].gain.setTargetAtTime(v, now, 1.0); }
   // гекконы: токи — раз в 1–4 мин ночью у построек (в лесу реже), домовый — тихое «чк-чк» вечером и ночью у освещённых построек
   if (now > AMB.next.tokay) {
     const k = W([[19.5, 29, 1]]) * (Z.has('village') ? 1 : Z.has('forest') || Z.has('thicket') ? 0.25 : 0);

@@ -110,45 +110,54 @@ function touchLayout() {
   for (const [k, [x, y, w, h = w]] of Object.entries(TOUCH_AT))
     Object.assign(P[k].style, { left: r.left + x * s + 'px', top: r.top + y * s + 'px', width: w * s + 'px', height: h * s + 'px' });
 }
-// рисунок слоя по точкам; перерисовывается, только когда что-то сдвинулось или нажалось
+// рисунок слоя по точкам; перерисовывается, только когда ручка сдвинулась на точку или что-то нажалось. Каждая деталь
+// (диск джойстика, ручка с рисунком, педаль с подписью) рисуется по точкам один раз в свой маленький холст (TOUCH.spr),
+// дальше кадр слоя только складывается из готовых: раньше весь слой заново рисовался по точкам — около 14 тысяч мазков
+// в каждом кадре, пока держишь руль.
+function touchSprite(key, w, h, draw) {
+  const S = TOUCH.spr || (TOUCH.spr = {});
+  if (!S[key]) { const c = document.createElement('canvas'); c.width = w; c.height = h; draw(c.getContext('2d')); S[key] = c; }
+  return S[key];
+}
+// фигура по точкам: в каждой точке рамки (x0, y0, w, h) col(u, v) — цвет или ничего; u, v — от середины рамки до середины точки
+function touchShape(g, x0, y0, w, h, col) {
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = col(x + 0.5 - w / 2, y + 0.5 - h / 2); if (c) { g.fillStyle = c; g.fillRect(x0 + x, y0 + y, 1, 1); } }
+}
+const touchDisc = (g, x0, y0, d, fill, ring) => touchShape(g, x0, y0, d, d, (u, v) => { const l = Math.hypot(u, v) - d / 2; return l > 0 ? null : l > -1 ? ring : fill; });
+const TOUCH_ICON = {
+  wheel: (u, v, R) => { const l = Math.hypot(u, v);                     // руль: обод, ступица, три спицы
+    return (l <= R && l > R - 1.6) || l <= R * 0.26 || (Math.abs(v + R * 0.07) < 0.8 && Math.abs(u) < R) || (Math.abs(u) < 0.8 && v > 0 && v < R); },
+  eye: (u, v, R) => { const t = u / R, edge = 0.62 * R * (1 - t * t), t2 = u / (R - 1.4), in2 = Math.abs(t2) < 1 && Math.abs(v) < 0.62 * (R - 1.4) * (1 - t2 * t2) - 0.9;
+    return (Math.abs(t) <= 1 && Math.abs(v) <= edge && !in2) || Math.hypot(u, v) <= R * 0.3; },   // глаз: веко и зрачок
+};
 function touchDraw() {
   const P = TOUCH.parts; if (!P || TOUCH.el.hidden) return;
-  const key = [P.look.kx, P.look.ky, P.stick.kx, P.stick.ky, P.stick.on, P.gas.on, P.hand.on].join();
+  // где ручки — сразу в точках слоя: ключ меняется, только когда ручка сдвинулась на целую точку
+  const knob = (el, [x, y, d]) => { const kd = Math.round(d * 0.42); return [kd, x + Math.round((d - kd) / 2 + el.kx * d / 2), y + Math.round((d - kd) / 2 + el.ky * d / 2)]; };
+  const kl = knob(P.look, TOUCH_AT.look), ks = knob(P.stick, TOUCH_AT.stick);
+  const key = [kl[1], kl[2], ks[1], ks[2], P.look.on, P.stick.on, P.gas.on, P.hand.on].join();
   if (key === TOUCH.drawn) return;
   TOUCH.drawn = key;
   const g = TOUCH.g, C = TOUCH_COL; g.clearRect(0, 0, RES_W, RES_H);
-  // фигура по точкам: в каждой точке рамки (x0, y0, w, h) col(u, v) — цвет или ничего; u, v — от середины рамки до
-  // середины точки
-  const shape = (x0, y0, w, h, col) => {
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const c = col(x + 0.5 - w / 2, y + 0.5 - h / 2); if (c) { g.fillStyle = c; g.fillRect(x0 + x, y0 + y, 1, 1); } }
-  };
-  const disc = (x0, y0, d, fill, ring) => shape(x0, y0, d, d, (u, v) => { const l = Math.hypot(u, v) - d / 2; return l > 0 ? null : l > -1 ? ring : fill; });
-  const ICON = {
-    wheel: (u, v, R) => { const l = Math.hypot(u, v);                     // руль: обод, ступица, три спицы
-      return (l <= R && l > R - 1.6) || l <= R * 0.26 || (Math.abs(v + R * 0.07) < 0.8 && Math.abs(u) < R) || (Math.abs(u) < 0.8 && v > 0 && v < R); },
-    eye: (u, v, R) => { const t = u / R, edge = 0.62 * R * (1 - t * t), t2 = u / (R - 1.4), in2 = Math.abs(t2) < 1 && Math.abs(v) < 0.62 * (R - 1.4) * (1 - t2 * t2) - 0.9;
-      return (Math.abs(t) <= 1 && Math.abs(v) <= edge && !in2) || Math.hypot(u, v) <= R * 0.3; },   // глаз: веко и зрачок
-  };
-  const stickDraw = (el, [x, y, d], icon, ticks) => {
-    disc(x, y, d, el.on ? C.fillOn : C.fill, el.on ? C.ringOn : C.ring);
+  const stickDraw = (el, [x, y, d], [kd, kx, ky], icon, ticks) => {
+    g.drawImage(touchSprite('disc' + d + (el.on ? '+' : ''), d, d, (q) => touchDisc(q, 0, 0, d, el.on ? C.fillOn : C.fill, el.on ? C.ringOn : C.ring)), x, y);
     if (ticks) for (const ty of [Math.round(d * 0.2), Math.round(d * 0.8) - 1]) { g.fillStyle = C.mark; g.fillRect(x + Math.round(d * 0.41), y + ty, Math.round(d * 0.18), 1); }   // метки «малый ход»
-    const kd = Math.round(d * 0.42), kx = x + Math.round((d - kd) / 2 + el.kx * d / 2), ky = y + Math.round((d - kd) / 2 + el.ky * d / 2), R = kd * 0.36;
-    disc(kx, ky, kd, C.knob, C.knobRing);
-    shape(kx, ky, kd, kd, (u, v) => ICON[icon](u, v, R) ? C.icon : null);
+    const R = kd * 0.36;
+    g.drawImage(touchSprite('knob' + kd + icon, kd, kd, (q) => { touchDisc(q, 0, 0, kd, C.knob, C.knobRing); touchShape(q, 0, 0, kd, kd, (u, v) => TOUCH_ICON[icon](u, v, R) ? C.icon : null); }), kx, ky);
   };
-  stickDraw(P.look, TOUCH_AT.look, 'eye', false);
-  stickDraw(P.stick, TOUCH_AT.stick, 'wheel', true);
+  stickDraw(P.look, TOUCH_AT.look, kl, 'eye', false);
+  stickDraw(P.stick, TOUCH_AT.stick, ks, 'wheel', true);
   // педаль: площадка со скруглёнными углами, рифли сверху и снизу, посередине подпись пиксельным шрифтом приборов
-  const pedalDraw = (el, [x, y, w, h], text) => {
+  const pedalDraw = (el, [x, y, w, h], text) => g.drawImage(touchSprite('pedal' + text + (el.on ? '+' : ''), w, h, (q) => {
     const rr = 6, inside = (u, v, k) => { const ax = Math.abs(u) - (w / 2 - k - rr), ay = Math.abs(v) - (h / 2 - k - rr);
       return ax <= 0 || ay <= 0 ? ax <= rr && ay <= rr : Math.hypot(ax, ay) <= rr; };
-    shape(x, y, w, h, (u, v) => !inside(u, v, 0) ? null : inside(u, v, 1) ? (el.on ? C.fillOn : C.fill) : (el.on ? C.ringOn : C.ring));
-    const cy = y + h / 2, rw = Math.round(w * 0.62);
-    g.fillStyle = C.mark;
-    for (let k = 0; k < 4; k++) for (const sg of [-1, 1]) g.fillRect(x + (w - rw) / 2, Math.round(cy + sg * (8 + k * 6) - (sg < 0 ? 2 : 0)), rw, 2);
+    touchShape(q, 0, 0, w, h, (u, v) => !inside(u, v, 0) ? null : inside(u, v, 1) ? (el.on ? C.fillOn : C.fill) : (el.on ? C.ringOn : C.ring));
+    const cy = h / 2, rw = Math.round(w * 0.62);
+    q.fillStyle = C.mark;
+    for (let k = 0; k < 4; k++) for (const sg of [-1, 1]) q.fillRect((w - rw) / 2, Math.round(cy + sg * (8 + k * 6) - (sg < 0 ? 2 : 0)), rw, 2);
     const t = hudText(text);
-    hudGlyphs(t, x + Math.round((w - hudWidth(t)) / 2), Math.round(cy - 2.5), el.on ? HUD_WHITE : C.text, false, g);
-  };
+    hudGlyphs(t, Math.round((w - hudWidth(t)) / 2), Math.round(cy - 2.5), el.on ? HUD_WHITE : C.text, false, q);
+  }), x, y);
   pedalDraw(P.gas, TOUCH_AT.gas, 'GAS');
   pedalDraw(P.hand, TOUCH_AT.hand, 'HANDBRAKE');
 }

@@ -215,20 +215,25 @@ const tossed = [];                       // то, что сейчас летит
 // Поставить на место: машина — четыре стены и твёрдый прямоугольник (на малой скорости в неё упираешься) плюс те же четыре
 // отрезка как предметы для удара; скутер — один круглый предмет. Считается по тому, где и как модель стоит сейчас.
 function vehPark(P) {
+  if (P.home && P.m.parent !== P.home) {                                    // после удара — снова в свою группу: вдали скрывается вместе с посёлком
+    P.home.attach(P.m);
+    if (typeof mergeTouch === 'function') mergeTouch(P.home);              // сводный меш группы соберётся заново, уже с машиной на новом месте
+  }
   const m = P.m, w = m.getWorldPosition(new THREE.Vector3()), d = new THREE.Vector3(1, 0, 0).applyQuaternion(m.getWorldQuaternion(new THREE.Quaternion()));
   const l = Math.hypot(d.x, d.z) || 1, ax = d.x / l, az = d.z / l, bump = () => vehBump(P);
-  if (P.bike) { P.hits = [addBreakable({ kind: 'scooter', mat: 'metal', x: w.x, z: w.z, r: 0.6, loss: 0, bump })]; P.walls = []; P.solid = null; return; }
+  if (P.bike) { P.hits = [addBreakable({ kind: 'scooter', mat: 'metal', x: w.x, z: w.z, r: 0.6, loss: 0, bump }, false)]; P.walls = []; P.solid = null; return; }   // (false — не в общий список разрушаемого: после каждого удара там копились мёртвые записи)
   const cx = w.x + ax * P.cx, cz = w.z + az * P.cx, hl = P.len / 2, hw = P.wid / 2;
   const C = [[-hl, -hw], [hl, -hw], [hl, hw], [-hl, hw]].map(([a, b]) => [cx + ax * a - az * b, cz + az * a + ax * b]);
   P.walls = C.map((p, i) => [p[0], p[1], C[(i + 1) % 4][0], C[(i + 1) % 4][1]]); P.solid = C;
   walls.push(...P.walls); solids.push(P.solid);
-  P.hits = P.walls.map((seg) => addBreakable({ kind: 'car', mat: 'metal', seg, loss: 0, bump }));
+  P.hits = P.walls.map((seg) => addBreakable({ kind: 'car', mat: 'metal', seg, loss: 0, bump }, false));
 }
 // снять с места: стены и предметы для удара убираются, модель переходит в сцену и дальше движется сама
 function vehUnpark(P) {
   for (const q of P.walls) { const i = walls.indexOf(q); if (i >= 0) walls.splice(i, 1); }
   if (P.solid) { const i = solids.indexOf(P.solid); if (i >= 0) solids.splice(i, 1); }
   dropBreakables(P.hits); P.hits = [];
+  if (!P.home) P.home = P.m.parent;                                         // группа, где машина стояла (вернётся туда, когда остановится)
   scene.attach(P.m); P.m.rotation.reorder('YXZ'); tossed.push(P);
 }
 // Удар машины игрока в стоящую. Стоящая отлетает по закону сохранения импульса: v2 = (1 + e)·m1 / (m1 + m2)·v, упругость
@@ -276,8 +281,9 @@ function blastParked(x, z, r) {
 // полёт, затем скольжение по земле с трением; остановившись, машина снова твёрдая, скутер остаётся лежать на боку
 function updateTossed(dt) {
   for (let i = tossed.length - 1; i >= 0; i--) {
-    const P = tossed[i], f = P.fly, m = P.m, y = Math.max(0, surfaceY(m.position.x, m.position.z));
+    const P = tossed[i], f = P.fly, m = P.m;
     m.position.x += f.vx * dt; m.position.z += f.vz * dt; m.rotation.y += f.wy * dt;
+    const y = Math.max(0, surfaceY(m.position.x, m.position.z));          // земля — там, где машина теперь (на склоне и с края пирса иначе проваливалась или висела кадр)
     if (!f.ground) {
       f.vy -= 16 * dt; m.position.y += f.vy * dt; m.rotation.x += f.wx * dt; m.rotation.z += f.wz * dt;
       if (f.vy < 0 && m.position.y <= y) {                                  // упала: машина встаёт на колёса, скутер ложится на бок

@@ -118,6 +118,30 @@ function soundB64(b64) {
   return a.buffer;
 }
 const soundDecode = (b64) => new Promise((ok, fail) => SOUND.ctx.decodeAudioData(soundB64(b64), ok, fail));
+// Расшифровать в родной частоте записи, а не пересчитывать под звуковую карту (48 кГц): птицы записаны в 22 кГц, фон — в
+// 32 кГц, и пересчёт при расшифровке раздувал их в памяти в 2,2 и 1,5 раза, ничего не добавляя к звуку. Под звуковую
+// карту браузер пересчитывает такую запись сам, при воспроизведении. mono — сложить каналы в один (петли фона: решение
+// Влада, память — вдвое меньше). Не вышло — обычная расшифровка.
+function soundMp3Rate(ab) {                                     // частота записи по заголовку первого кадра MP3, 0 — не понять
+  const b = new Uint8Array(ab, 0, Math.min(ab.byteLength, 65536));
+  let i = b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33 ? 10 + ((b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9]) : 0;   // пропустить тег ID3
+  for (; i < b.length - 4; i++) if (b[i] === 0xff && (b[i + 1] & 0xe0) === 0xe0) {
+    const ver = (b[i + 1] >> 3) & 3, sr = (b[i + 2] >> 2) & 3, T = { 3: [44100, 48000, 32000], 2: [22050, 24000, 16000], 0: [11025, 12000, 8000] }[ver];
+    return T && sr < 3 ? T[sr] : 0;
+  }
+  return 0;
+}
+async function soundDecodeNative(b64, mono = false) {
+  let buf = null;
+  try { const ab = soundB64(b64), rate = soundMp3Rate(ab); if (rate) buf = await new OfflineAudioContext(1, 1, rate).decodeAudioData(ab); } catch (e) { buf = null; }
+  if (!buf) buf = await soundDecode(b64);
+  if (mono && buf.numberOfChannels > 1) {
+    const m = SOUND.ctx.createBuffer(1, buf.length, buf.sampleRate), out = m.getChannelData(0), k = 1 / buf.numberOfChannels;
+    for (let c = 0; c < buf.numberOfChannels; c++) { const ch = buf.getChannelData(c); for (let i = 0; i < ch.length; i++) out[i] += ch[i] * k; }
+    buf = m;
+  }
+  return buf;
+}
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
 // слой мотора: запись в моно и таблица «время → частота»
@@ -282,7 +306,7 @@ function soundUpdate(dt) {
   else if (r < 0.42 && S.gear > 0) S.gear--;
   r = Math.max(RPM_IDLE, Math.min(1, s / GEARS[S.gear]));              // у нуля — холостой ход (сцепление буксует)
   S.rpm += (r - S.rpm) * Math.min(1, dt * 9);                          // переключение — быстрый «съезд», а не щелчок
-  S.open = warp || car.gas > 0.08 || (car.speed < 0.3 && car.brake > 0.08) ? 1 : 0;   // газ; задним ходом едут на «тормозе»
+  S.open = car.gas > 0.08 || (car.speed < 0.3 && car.brake > 0.08) ? 1 : 0;   // газ; задним ходом едут на «тормозе»
   if (S.test) { S.rpm = S.test.rpm; S.open = S.test.open; }
   if (S.node) { S.node.parameters.get('rpm').value = S.rpm; S.node.parameters.get('open').value = S.open; }
   // без газа: своя запись сброса — естественный тон; у кого её нет — разгон, притушенный фильтром
@@ -292,9 +316,9 @@ function soundUpdate(dt) {
 
   // --- шины ---
   const depth = waterDepth(car.x, car.z), wet = depth > 0.1, gate = clamp01((sp - 3) / 7);        // тише 3 м/с — молчат
-  const hand = !warp && (keys.Space || (typeof TOUCH !== 'undefined' && TOUCH.hand)) ? 1 : 0;   // ручник — клавишей или с сенсорного слоя
+  const hand = (keys.Space || (typeof TOUCH !== 'undefined' && TOUCH.hand)) ? 1 : 0;   // ручник — клавишей или с сенсорного слоя
   const side = clamp01((Math.abs(car.slip) - 0.1) / 0.5), brake = car.speed > 0 ? clamp01((car.brake - 0.8) / 0.2) : 0;
-  const slide = wet || warp ? 0 : Math.max(side * 0.65, hand) * gate, skid = wet || warp ? 0 : brake * gate;
+  const slide = wet ? 0 : Math.max(side * 0.65, hand) * gate, skid = wet ? 0 : brake * gate;
   S.asphalt += ((surfaceLoss(car.x, car.z) ? 0 : 1) - S.asphalt) * Math.min(1, dt / 0.12);        // покрытие меняется плавно
   const T = S.tires, a = S.asphalt, tc = 0.06;
   T.squeal.gain.setTargetAtTime(slide * a, now, tc);

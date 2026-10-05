@@ -9,7 +9,8 @@
 // постройки и лодки — твёрдые.
 // Оси участка: +X — вдоль берега, +Z — к морю, y — вверх. Файл только объявляет функции; игра зовёт buildBeaches().
 
-const BEACH_SAND = { chaweng: '#f4eedd', lamai: '#dccb9c', maenam: '#ead9a8', nathon: '#e2cf9e', bophut: '#e6d3a0', choeng_mon: '#f6f1e4', silver: '#f3eee2' };       // цвет песка (подмешивается в цвет земли)
+const BEACH_SAND = { chaweng: '#f4eedd', lamai: '#dccb9c', maenam: '#ead9a8', nathon: '#e2cf9e', bophut: '#e6d3a0', choeng_mon: '#f6f1e4', silver: '#f3eee2', chaweng_noi: '#f4eedd', coral_cove: '#efe6cf', bang_kao: '#e2d2a6' };       // цвет песка (подмешивается в цвет земли)
+const BEACH_TOP = { coral_cove: 2.5, chaweng_noi: 2.1 };            // до какой высоты земли лежит песок (иначе 1,6 м): бухты под склоном лежат выше
 
 // постройка на террасе: S — сборщик, y0 — уровень террасы. Возвращают [ширина, глубина] для стен
 function beachTentBar(S, y0) {                                       // Чавенг: подиум, стойка, белый тент-мембрана, колонки
@@ -39,7 +40,8 @@ function beachThatchCafe(S, y0) {                                    // Лама
 function beachBungalow(S, x, y0, wall) {                             // домик под оранжево-красной черепицей, с верандой
   S.box(6.4, 0.5, 6.6, x, y0 + 0.25, 0.3, '#b9b4a8');
   S.box(6, 2.8, 5, x, y0 + 1.9, -0.5, wall);
-  S.box(1.0, 2.0, 0.08, x - 1.4, y0 + 1.5, 2.02, '#3a2a22'); S.box(1.6, 1.2, 0.08, x + 1.3, y0 + 1.9, 2.02, '#3e4858');
+  S.box(1.0, 2.0, 0.08, x - 1.4, y0 + 1.5, 2.02, '#3a2a22'); S.box(1.6, 1.2, 0.08, x + 1.3, y0 + 1.9, 2.02, '#3e4858'); for (const sd of [-1, 1]) winX(S, x + sd * 3, y0 + 1.95, -0.8, 1.3, 1.1, sd, '#3e4858', '#f2f2ee');   // окна на боках
+  acZ(S, x + 1.6, y0 + 1.2, -3, -1);                                                              // кондиционер сзади
   for (const dx of [-2.9, 2.9]) S.box(0.14, 2.6, 0.14, x + dx, y0 + 1.8, 3.2, '#f2f2ee');
   S.hip(x, 0.3, 3.9, 4.1, y0 + 3.2, 1.9, 2.0, y0 + 4.3, (i) => i % 2 ? '#bd5d41' : '#a84e36'); S.hip(x, 0.3, 1.9, 2.0, y0 + 4.3, 0.3, 0.05, y0 + 5.1, (i) => i % 2 ? '#c96a4c' : '#b3573d');
 }
@@ -51,6 +53,7 @@ function beachHotel(S, y0) {                                         // Чаве
     S.box(W, 0.14, 1.3, 0, y + 0.07 + (f ? 0 : 0.2), D / 2 + 0.65, '#d8dad6');
     for (let i = 0; i < 5; i++) { const x = -W / 2 + 2 + i * 4; S.box(2.6, 2.1, 0.08, x, y + 1.3, D / 2 + 0.02, '#3e4858'); S.box(0.08, 2.1, 0.1, x, y + 1.3, D / 2 + 0.03, '#d8dade'); if (f) { S.box(3.6, 0.06, 0.06, x, y + 1.0, D / 2 + 1.25, '#9aa0a6'); S.box(3.6, 0.5, 0.04, x, y + 0.5, D / 2 + 1.25, '#bcd0d8'); } }
   }
+  blockBackSides(S, W, D, y0, Fh, 3, { balcony: true, ac: true });                               // окна по периметру, балконы и кондиционеры сзади
   for (const x of [-6, 4]) S.tube(x, y0 + Fh * 3 + 0.4, y0 + Fh * 3 + 1.7, -2, 0.6, 0.6, '#2f5f9a', 8);
   return [W, D];
 }
@@ -123,6 +126,8 @@ function buildBeaches() {
     }
     if (Bc.plain) { if (Bc.id === 'bophut' || Bc.id === 'maenam') beachLight(Bc); continue; }   // простой пляж: песок; у Бопхута и Маенама — подушки, бары, лодки
     if (Bc.id === 'silver') { beachSilver(Bc); continue; }               // Силвер-бич: валуны и немного шезлонгов
+    const own = { chaweng_noi: beachChawengNoi, coral_cove: beachCoralCove, bang_kao: beachBangKao }[Bc.id];   // районы из districts.js
+    if (own) { try { own(Bc); } catch (e) { console.warn('пляж', Bc.id, e); DIST_ERR.push(Bc.id + ': ' + e.message + ' ' + (e.stack || '').split('\n')[1]); } continue; }
     // Чонг Мон — как Чавенг: белый песок, курорты, шезлонги с синими подушками (refs/beach_choeng_mon)
     const pts = Bc.pts, N = pts.length, chaweng = Bc.id === 'chaweng' || Bc.id === 'choeng_mon', rnd = seededRandom({ chaweng: 2307, lamai: 1858, choeng_mon: 3109 }[Bc.id] || 1858);
     const frame = (i) => { const [x, z, nx, nz] = pts[Math.max(0, Math.min(N - 1, i))]; return { x, z, nx, nz, tx: nz, tz: -nx }; };   // t — вдоль берега, n — вглубь суши

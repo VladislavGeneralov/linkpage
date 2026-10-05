@@ -48,7 +48,11 @@ const BIRD_MAX = 4;                        // голосов одновреме�
 const BIRD_RATE = 0.42;                    // новых голосов в секунду днём; утром и вечером — в BIRD_DAWN раз больше
 const BIRD_DAWN = 2.5, BIRD_NIGHT = 0.6;   // ночью темп ниже, а поют только ночные виды
 const BIRD_EDGE = 0.4;                     // ч — на краях окна вес спадает плавно (25 мин)
-const BIRDS_ST = { clips: {}, active: 0, last: {}, lastClip: '', zones: null, zonesAt: -1, log: [] };   // log — что звучало (для проверок)
+const BIRDS_ST = { clips: {}, active: 0, pending: 0, last: {}, lastClip: '', zones: null, zonesAt: -1, log: [] };   // log — что звучало (для проверок); pending — голоса, ждущие расшифровки записи
+// Запись вида расшифровывается (в несжатый звук, ~3 МБ на вид) только когда вид впервые запел, и в памяти держатся
+// BIRD_KEEP последних спетых видов; остальные расшифруются снова, когда понадобятся. Раньше при старте расшифровывались
+// все виды сразу — около 113 МБ памяти. Звучит всё так же: голос просто начинается, как только запись готова (доли секунды).
+const BIRD_KEEP = 10;
 
 // декодировать записи — после того, как запустился звук машины (птицы не задерживают мотор)
 async function birdsStart() {
@@ -56,9 +60,18 @@ async function birdsStart() {
   if (!D || !S.ctx) return;
   S.busBirds = S.ctx.createGain(); S.busBirds.gain.value = MIX.birds; S.busBirds.connect(S.lim);
   { const a = S.ctx.createAnalyser(); a.fftSize = 16384; S.busBirds.connect(a); S.busBirds.meter = a; }   // для проверок уровня
-  for (const [id, d] of Object.entries(D)) {
-    try { BIRDS_ST.clips[id] = { buf: await soundDecode(d.mp3), clips: d.clips }; } catch (e) { /* битая запись — вида просто не будет */ }
-  }
+  for (const [id, d] of Object.entries(D)) BIRDS_ST.clips[id] = { mp3: d.mp3, clips: d.clips, buf: null, used: 0 };
+}
+// запись вида — в память (если её там нет); лишние давно не звучавшие виды из памяти выходят
+function birdBuffer(id, C) {
+  if (C.buf) return Promise.resolve(C.buf);
+  if (!C.loading) C.loading = soundDecodeNative(C.mp3).then((buf) => {      // в родной частоте записи (22 кГц) — вдвое меньше памяти, звук тот же
+    C.buf = buf; C.loading = null;
+    const held = Object.values(BIRDS_ST.clips).filter((q) => q.buf).sort((a, b) => b.used - a.used);
+    for (const q of held.slice(BIRD_KEEP)) if (q !== C) q.buf = null;
+    return buf;
+  }).catch((e) => { delete BIRDS_ST.clips[id]; C.loading = null; throw e; });   // битая запись — вида просто не будет
+  return C.loading;
 }
 // где машина: набор зон (пересчитывается раз в полторы секунды)
 function birdZones(x, z) {
@@ -86,11 +99,11 @@ function birdsUpdate(dt) {
   const S = SOUND, B = BIRDS_ST;
   if (!S.busBirds || !Object.keys(B.clips).length || typeof dayTime === 'undefined') return;
   const now = S.ctx.currentTime, h = ((dayTime % 24) + 24) % 24;
-  if (now - B.zonesAt > 1.5) { B.zones = birdZones(car.x, car.z); B.zonesAt = now; }
+  if (!B.zones || now - B.zonesAt > 1.5) { B.zones = birdZones(car.x, car.z); B.zonesAt = now; }   // (пока звук не запущен, время звука стоит на нуле — зоны всё равно нужны сразу)
   // темп: утро и вечер — гуще, ночь — реже; на скорости голоса реже (их и так не слышно за мотором и ветром)
   const dawn = (h > 5 && h < 8.5) || (h > 17 && h < 18.75), night = h > 19.5 || h < 4.5, kmh = Math.abs(car.speed) * 3.6;
   const rate = BIRD_RATE * (dawn ? BIRD_DAWN : night ? BIRD_NIGHT : 1) * Math.max(0.25, Math.min(1, 1 - (kmh - 60) / 60));
-  if (B.active >= BIRD_MAX || Math.random() > rate * dt) return;
+  if (B.active + B.pending >= BIRD_MAX || Math.random() > rate * dt) return;
   // кто сейчас поёт здесь
   const cand = [];
   let sum = 0;
@@ -107,7 +120,13 @@ function birdsUpdate(dt) {
   const [id, , o, C] = pick;
   let n = (Math.random() * C.clips.length) | 0;
   if (C.clips.length > 1 && id + n === B.lastClip) n = (n + 1) % C.clips.length;      // тот же фрагмент подряд не звучит
-  B.lastClip = id + n; B.last[id] = now;
+  B.lastClip = id + n; B.last[id] = now; C.used = now;
+  if (C.buf) birdVoice(id, o, C, n, h);
+  else { B.pending++; birdBuffer(id, C).then(() => { B.pending--; birdVoice(id, o, C, n, h); }, () => { B.pending--; }); }   // запись ещё не в памяти — голос, как только она готова
+}
+// один голос вида id: фрагмент n записи C в случайной точке вокруг машины
+function birdVoice(id, o, C, n, h) {
+  const S = SOUND, B = BIRDS_ST, now = S.ctx.currentTime;
   // где: случайная точка вокруг машины; у дальних голосов дальше, у тихих — рядом
   const d = o.near ? 8 + Math.random() * 22 : (15 + Math.random() * 65) * (o.far ? 0.8 + Math.random() * (o.far - 0.8) : 1), a = Math.random() * 6.283;
   const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw), dx = Math.cos(a), dz = Math.sin(a);

@@ -433,12 +433,15 @@ function updateJungle() {
   want.sort((a, b) => a[0] - b[0]);
   if (JG.job && Math.hypot(JG.job.chunk.x - px, JG.job.chunk.z - pz) > R + CH) { dropBreakables(JG.job.chunk.breaks); JG.job = null; }   // начатая клетка осталась далеко позади
   const until = Math.min(t0 + 4, STILL.until);                            // на подгрузку леса — не больше 4 мс кадра (и общий срок подгрузки)
+  let stepped = false;                                                    // хотя бы один ряд леса за кадр — даже если время подгрузки уже вышло
   for (const [d, cx, cz] of want) {
     const key = cx + ',' + cz, near = jump && d < 420;
-    if (!near && performance.now() >= until) break;                       // остальные — в следующих кадрах
-    if (JG.job && JG.job.key !== key && !near) { if (!jungleStep(JG.job, until)) break; JG.chunks.set(JG.job.key, JG.job.chunk); JG.job = null; }   // сначала — начатая
+    if (!near && stepped && performance.now() >= until) break;            // остальные — в следующих кадрах
+    if (JG.job && JG.job.key !== key && !near) { stepped = true; if (!jungleStep(JG.job, until)) break; JG.chunks.set(JG.job.key, JG.job.chunk); JG.job = null; }   // сначала — начатая
     if (JG.chunks.has(key)) continue;
+    if (!near && stepped && performance.now() >= until) break;
     const job = JG.job && JG.job.key === key ? JG.job : jungleStart(cx, cz);
+    stepped = true;
     if (jungleStep(job, near ? Infinity : until)) { JG.chunks.set(key, job.chunk); if (JG.job === job) JG.job = null; }
     else JG.job = job;
   }

@@ -296,12 +296,16 @@ function buildPiers() {
       for (let u = 61; u < 91; u += 6) bx(gn, 3.2, 2.8, 0.1, grey, u, Y + 1.4, -10.46);                     // ворота склада
       bx(gn, 10, 3.4, 6, wh, 62, Y + 1.7, -3.5); bx(gn, 10.6, 0.3, 6.6, M.canopy, 62, Y + 3.55, -3.5);      // касса и зал ожидания
       bx(gn, 0.1, 1.2, 4.4, lambert({ color: 0x2c424c }), 67.03, Y + 1.9, -3.5);
+      { const ac = lambert({ color: 0xd8dade }); bx(gn, 0.32, 0.62, 0.9, ac, 56.84, Y + 2.4, -2.5); bx(gn, 0.32, 0.62, 0.9, ac, 56.84, Y + 2.4, -4.6); }   // кондиционеры на кассе
       wallBox(gn, 75, 13, 34, 5); wallBox(gn, 62, 3.5, 10, 6);
       parkVehicle(gn, pickupGeo('closed', '#e8e8e4'), 82, 6.5, 'u-', Y); parkVehicle(gn, pickupGeo('boxes', '#2f5f9a'), 90, 6.5, 'u-', Y);
       parkVehicle(gn, pickupGeo('empty', '#c8ccd0'), 98, 12.5, 'v-', Y);
       for (let u = HN0 + 4; u < HN1; u += 12) lamp(gn, u, HVC + HHV - 0.6, Y, 6); }
     bx(gn, 11, 5, 11, lambert({ color: 0xdcd8cc }), -8.5, shoreYN + 2.5, -17);            // терминал Seatran — сбоку от подъезда, между набережной и берегом
     bx(gn, 11.4, 0.4, 11.4, lambert({ color: 0x3e5a74 }), -8.5, shoreYN + 5.1, -17);
+    { const gl = lambert({ color: 0x2c424c });                                            // немного окон по всем сторонам
+      for (const d of [-3, 0, 3]) { for (const sx of [-14.05, -2.95]) bx(gn, 0.1, 1.2, 1.6, gl, sx, shoreYN + 2.9, -17 + d); for (const sz of [-22.55, -11.45]) bx(gn, 1.6, 1.2, 0.1, gl, -8.5 + d, shoreYN + 2.9, sz); }
+      const ac = lambert({ color: 0xd8dade }); for (const d of [-1.5, 1.5]) { bx(gn, 0.32, 0.62, 0.9, ac, -14.17, shoreYN + 1.6, -17 + d); bx(gn, 0.9, 0.62, 0.32, ac, -8.5 + d, shoreYN + 1.6, -22.67); } }   // кондиционеры
     // старый узкий пирс южнее (корень 9.5353, 99.9347), фонари «гусиная шея» по северной стороне
     const go = pierGroup('nathon_old');
     const OL = 80;
@@ -358,6 +362,9 @@ function buildPiers() {
     for (const [dz, len, h, col] of [[14, 6.5, 3, 0xe8e4da], [24.5, 9, 3.5, 0xdcd8cc], [38.5, 14, 3.5, 0xe8e4da]]) {
       bx(gN, 5, h, len, lambert({ color: col }), -19, sh + h / 2, dz);
       bx(gN, 5.4, 0.4, len + 0.5, lambert({ color: 0x7a3b35 }), -19, sh + h + 0.2, dz);
+      const gl = lambert({ color: 0x2c424c }), n = Math.max(1, Math.floor(len / 3.2));       // немного окон с обеих длинных сторон
+      for (let i = 0; i < n; i++) for (const sx of [-21.55, -16.45]) bx(gN, 0.1, 1.0, 1.3, gl, sx, sh + h * 0.55, dz - len / 2 + (i + 0.5) * len / n);
+      bx(gN, 0.32, 0.62, 0.9, lambert({ color: 0xd8dade }), -21.67, sh + 0.7, dz);                          // кондиционер сзади
     }
     {                                                                                     // вывеска — над общим подъездом, до развилки к двум пирсам
       const w = toWorld(gN, -96, 0), gy = groundY(w.x, w.z);
@@ -453,6 +460,7 @@ function buildPiers() {
       bx(t, 4.5, 0.5, 1.05, lambert({ color: 0x182e67 }), 0, sh + 0.5, 0); }
     { const b = new THREE.Group(); b.position.set(-13, 0, 13); b.rotation.y = 0.5; g.add(b);
       bx(b, 12, 2.2, 3, lambert({ color: 0xcab38c }), 0, sh + 1.1, 0);
+      { const gl = lambert({ color: 0x2c424c }); for (const du of [-3.6, 0, 3.6]) for (const sz of [-1.55, 1.55]) bx(b, 1.3, 0.8, 0.1, gl, du, sh + 1.3, sz); bx(b, 0.9, 0.62, 0.32, lambert({ color: 0xd8dade }), 5.2, sh + 1.3, -1.67); }   // окошки на длинных сторонах
       const r = bx(b, 12.4, 1.6, 3.8, lambert({ color: 0x433532 }), 0, sh + 2.9, 0); r.scale.y = 0.9; }
     // (катамаран Lomprayah у этого пирса — паром по расписанию: ferry.js)
     pierGroups.push(g);

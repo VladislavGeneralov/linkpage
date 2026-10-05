@@ -12,6 +12,41 @@ const vegKeepOut = [];                   // участки, где придор�
 let farmPlot = null;                     // каннабис-ферма: { g — её группа, u0, u1, hv — участок за частоколом } — там растут листья-бонусы
 
 // ---------- общее ----------
+// окно в раме на стене: winZ — стена смотрит на ±Z (sd — знак), её плоскость z; winX — стена смотрит на ±X, плоскость x;
+// (a, y) — центр окна вдоль стены и по высоте, w × h — размер
+function winZ(S, x, y, z, w, h, sd, glass = '#3e4858', frame = '#e8e8e4') {
+  S.box(w, h, 0.08, x, y, z + sd * 0.03, glass);
+  for (const [bw, bh, bx, by] of [[w + 0.12, 0.08, 0, h / 2], [w + 0.12, 0.1, 0, -h / 2], [0.08, h, -w / 2, 0], [0.08, h, w / 2, 0]]) S.box(bw, bh, 0.06, x + bx, y + by, z + sd * 0.07, frame);
+}
+function winX(S, x, y, z, w, h, sd, glass = '#3e4858', frame = '#e8e8e4') {
+  S.box(0.08, h, w, x + sd * 0.03, y, z, glass);
+  for (const [bw, bh, bz, by] of [[w + 0.12, 0.08, 0, h / 2], [w + 0.12, 0.1, 0, -h / 2], [0.08, h, -w / 2, 0], [0.08, h, w / 2, 0]]) S.box(0.06, bh, bw, x + sd * 0.07, y + by, z + bz, frame);
+}
+// наружный блок кондиционера на стене: acZ — стена смотрит на ±Z (плоскость z), acX — на ±X (плоскость x)
+function acZ(S, x, y, z, sd) { S.box(0.9, 0.62, 0.32, x, y, z + sd * 0.17, '#d8dade'); S.box(0.5, 0.44, 0.04, x - 0.12, y, z + sd * 0.34, '#8e9296'); S.box(0.06, 0.3, 0.06, x + 0.3, y - 0.45, z + sd * 0.05, '#c8cacc'); }
+function acX(S, x, y, z, sd) { S.box(0.32, 0.62, 0.9, x + sd * 0.17, y, z, '#d8dade'); S.box(0.04, 0.44, 0.5, x + sd * 0.34, y, z - 0.12, '#8e9296'); S.box(0.06, 0.3, 0.06, x + sd * 0.05, y - 0.45, z + 0.3, '#c8cacc'); }
+// задняя стена и торцы корпуса W × D (фасад — +Z), floors этажей по Fh от y0: окна; o.balcony — балконы сзади со второго этажа,
+// o.ac — наружные блоки кондиционеров (на балконе или у окна), o.glass / o.frame / o.slab / o.rail — цвета
+function blockBackSides(S, W, D, y0, Fh, floors, o = {}) {
+  const glass = o.glass || '#3e4858', frame = o.frame || '#d8dade', nb = Math.max(1, Math.round((W - 2) / (o.step || 4))), bw = W / nb, ww = Math.min(1.8, bw - 1.2);
+  const nz = Math.max(1, Math.round((D - 2) / 3.5));
+  for (let f = 0; f < floors; f++) {
+    const fy = y0 + f * Fh, y = fy + Fh * 0.48, bal = o.balcony && f > 0;
+    for (let i = 0; i < nb; i++) { const x = -W / 2 + (i + 0.5) * bw;
+      winZ(S, x - (bal ? 0.4 : 0), y, -D / 2, ww, Math.min(1.6, Fh - 1.2), -1, glass, frame);
+      if (bal) { S.box(bw - 0.6, 0.12, 1.1, x, fy + 0.06, -D / 2 - 0.55, o.slab || '#d8dad6'); S.box(bw - 0.6, 0.9, 0.05, x, fy + 0.57, -D / 2 - 1.08, o.rail || '#bcd0d8'); S.box(bw - 0.6, 0.06, 0.08, x, fy + 1.04, -D / 2 - 1.08, '#9aa0a6');
+        if (o.ac) acZ(S, x + bw / 2 - 0.9, fy + 0.45, -D / 2 - 0.05, -1); }
+      else if (o.ac && (i + f) % 2 === 0) acZ(S, x + ww / 2 + 0.7, y - 0.35, -D / 2, -1);
+    }
+    for (const sd of [-1, 1]) for (let j = 0; j < nz; j++) winX(S, sd * W / 2, y, -D / 2 + (j + 0.5) * D / nz, 1.2, Math.min(1.5, Fh - 1.3), sd, glass, frame);
+  }
+}
+// чиллер на плоской крыше: серый короб с решётками и двумя тёмными вентиляторами сверху; y — уровень крыши
+function roofChiller(S, x, y, z, along = 'x') {
+  const [w, d] = along === 'x' ? [3.2, 1.8] : [1.8, 3.2];
+  S.box(w, 1.5, d, x, y + 0.75, z, '#c8cacc'); S.box(w + 0.1, 0.08, d + 0.1, x, y + 1.52, z, '#a8aaac');
+  for (const k of [-1, 1]) { const fx = along === 'x' ? x + k * 0.8 : x, fz = along === 'x' ? z : z + k * 0.8; S.tube(fx, y + 1.5, y + 1.6, fz, 0.6, 0.6, '#3a3c3e', 10); }
+}
 function spotGroup(id) {
   const P = IS.spots[id], g = new THREE.Group();
   g.position.set(P.x, 0, P.z);
@@ -741,6 +776,8 @@ function buildShopParts() {
   });
   A.box(0.45, 0.8, 0.45, F + 0.55, 0.3 + 0.4, -W / 2 + 0.9, '#2f7a4a');
   for (const x of [-2.5, 0.5]) A.box(0.9, 0.7, 0.35, x, 3.2, W / 2 + 0.18, '#d8dade');
+  for (const x of [-2.5, -0.6]) acZ(A, x, 3.2, -W / 2, -1);                                          // кондиционеры и на другом боку
+  for (const sd of [-1, 1]) for (const x of [1.4, 3.7]) winZ(A, x, 0.3 + 1.75, sd * W / 2, 1.7, 1.2, sd, GLASS, ALU);   // окна на боках (сзади — глухо, просил Влад)
   // площадка перед магазином: бетон, белые линии стоянки
   const P0 = F + 0.3, P1 = F + SHOP.PARK;
   A.quad([P0, 0.08, -W / 2 - 3], [P1, 0.08, -W / 2 - 3], [P1, 0.08, W / 2 + 3], [P0, 0.08, W / 2 + 3], '#a29f97');   // выше придорожной полосы земли (та — на 3 см над землёй)
