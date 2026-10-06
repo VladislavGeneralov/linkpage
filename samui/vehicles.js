@@ -283,16 +283,21 @@ function updateTossed(dt) {
   for (let i = tossed.length - 1; i >= 0; i--) {
     const P = tossed[i], f = P.fly, m = P.m;
     m.position.x += f.vx * dt; m.position.z += f.vz * dt; m.rotation.y += f.wy * dt;
-    const y = Math.max(0, surfaceY(m.position.x, m.position.z));          // земля — там, где машина теперь (на склоне и с края пирса иначе проваливалась или висела кадр)
+    const y = surfaceY(m.position.x, m.position.z);                         // земля — там, где машина теперь (на склоне и с края пирса иначе проваливалась или висела кадр); в воде — дно
+    const wd = waterDepth(m.position.x, m.position.z), wl = wd > 0 ? y + wd : -Infinity, under = m.position.y < wl - 0.3;   // уровень воды (море, озеро, бассейн)
+    if (under) { const k = Math.exp(-dt * 2.2); f.vx *= k; f.vz *= k; f.wx *= k; f.wz *= k; f.wy *= k; }   // вода гасит ход и кувырок
     if (!f.ground) {
-      f.vy -= 16 * dt; m.position.y += f.vy * dt; m.rotation.x += f.wx * dt; m.rotation.z += f.wz * dt;
+      const was = m.position.y;
+      f.vy -= (under ? 3 : 16) * dt; if (under) f.vy = Math.max(f.vy, -1.6);  // под водой тонет медленно
+      m.position.y += f.vy * dt; m.rotation.x += f.wx * dt; m.rotation.z += f.wz * dt;
+      if (was >= wl && m.position.y < wl) { splashAt(m.position.x, m.position.z, wl, Math.min(1, 0.3 + Math.hypot(f.vx, f.vz, f.vy) / 14)); soundShot('thud', 0.35); }   // плюх
       if (f.vy < 0 && m.position.y <= y) {                                  // упала: машина встаёт на колёса, скутер ложится на бок
         f.ground = true; m.position.y = y; m.rotation.z = 0; m.rotation.x = P.bike ? (Math.sin(m.rotation.x) >= 0 ? 1.36 : -1.36) : 0;
         if (f.vy < -3) { soundShot('thud', Math.min(0.8, -f.vy / 14)); if (!P.bike) soundShot('carHit', 0.5); }
       }
     } else {
       m.position.y = y;
-      const sp = Math.hypot(f.vx, f.vz), ns = Math.max(0, sp - VEH_FRICTION[P.bike ? 'bike' : 'car'] * dt);
+      const sp = Math.hypot(f.vx, f.vz), ns = Math.max(0, sp - VEH_FRICTION[P.bike ? 'bike' : 'car'] * (wd > 0.5 ? 2.5 : 1) * dt);   // по дну тащится тяжелее
       f.vx *= sp ? ns / sp : 0; f.vz *= sp ? ns / sp : 0; f.wy *= Math.exp(-dt * 3);
       if (ns < 0.4) { P.fly = null; tossed.splice(i, 1); vehPark(P); }
     }

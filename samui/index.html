@@ -5,11 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Samui Drive">
+<meta name="application-name" content="Samui Drive">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>Tropical Game</title>
+<title>Samui Drive</title>
 <style>
   html, body { margin: 0; height: 100%; background: #10141c; overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
   /* телефон стоит вертикально — просьба повернуть (надпись — пиксельным шрифтом, рисует игра) */
@@ -34,13 +36,14 @@
     font: 11px/1.35 Consolas, 'Courier New', monospace; color: #9aa6b4; user-select: none; white-space: nowrap; }
   #fps[hidden] { display: none; }
   #fps b { display: block; font-weight: normal; color: #5f6b7a; margin: 0 0 3px; }
-  /* переключатель сенсорных ручек — крошечный, на поле страницы снизу слева */
-  #touchToggle { position: fixed; left: 8px; bottom: 8px; z-index: 5; display: flex; align-items: center; gap: 5px; cursor: pointer;
+  /* крошечные переключатели на поле страницы снизу слева: сенсорные ручки и помощь в заносе */
+  #touchToggle, #driftToggle { position: fixed; left: 8px; bottom: 8px; z-index: 5; display: flex; align-items: center; gap: 5px; cursor: pointer;
     font: 10px/1 Consolas, 'Courier New', monospace; color: #5f6b7a; user-select: none; }
-  #touchToggle[hidden] { display: none; }
-  #touchToggle i { position: relative; width: 18px; height: 10px; border-radius: 5px; background: #26334a; transition: background 0.15s; }
-  #touchToggle i::after { content: ''; position: absolute; left: 1px; top: 1px; width: 8px; height: 8px; border-radius: 50%; background: #5f6b7a; transition: left 0.15s, background 0.15s; }
-  #touchToggle.on i { background: #3a5a3a; } #touchToggle.on i::after { left: 9px; background: #9ad89a; } #touchToggle.on { color: #9aa6b4; }
+  #driftToggle { bottom: 24px; }
+  #touchToggle[hidden], #driftToggle[hidden] { display: none; }
+  #touchToggle i, #driftToggle i { position: relative; width: 18px; height: 10px; border-radius: 5px; background: #26334a; transition: background 0.15s; }
+  #touchToggle i::after, #driftToggle i::after { content: ''; position: absolute; left: 1px; top: 1px; width: 8px; height: 8px; border-radius: 50%; background: #5f6b7a; transition: left 0.15s, background 0.15s; }
+  #touchToggle.on i, #driftToggle.on i { background: #3a5a3a; } #touchToggle.on i::after, #driftToggle.on i::after { left: 9px; background: #9ad89a; } #touchToggle.on, #driftToggle.on { color: #9aa6b4; }
   /* надпись на время загрузки: видна, пока качаются данные и строится мир; убирается с первым кадром */
   #loading { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; pointer-events: none;
     font: 14px/1 Consolas, 'Courier New', monospace; letter-spacing: 3px; color: #9aa6b4; }
@@ -55,6 +58,7 @@
 <audio id="music" src="track.mp3" preload="metadata"></audio>
 <div id="fps" hidden><b>FPS</b><span>–</span></div>
 <div id="touchToggle" hidden title="touch controls"><i></i>TOUCH</div>
+<div id="driftToggle" hidden title="drift assist (J)"><i></i>DRIFT ASSIST</div>
 <div id="scMenu" hidden>
   <input id="scUrl" spellcheck="false" autocomplete="off">
   <input id="scCid" spellcheck="false" autocomplete="off">
@@ -4276,8 +4280,8 @@ const BANANA_LEN = 1.3;                  // м — чуть меньше шир�
 const BANANA_Y = 0.3;                    // м — просвет под бананом
 const BANANA_REACH = 1.25;               // м — ближе этого к оси машины банан собирается
 const BANANA_RESPAWN = 60;               // с
-const BANANA_TOTAL = 1500;               // сколько бананов в мире
-const COCONUT_TOTAL = 560;               // и кокосов
+const BANANA_TOTAL = 750;                // сколько бананов в мире (было 1500 — Влад: «очень много бананов»)
+const COCONUT_TOTAL = 1100;              // и кокосов (было 560 — «маловато»)
 const BANANA_CLEAR = 1.4;                // м — не ближе к стенам и столбам (пятно света — 1.25 м)
 const BANANA_APART = 4;                  // м — не ближе друг к другу
 const BANANA_SEEN = 320;                 // м — дальше не рисуем (банан там меньше пикселя)
@@ -4403,7 +4407,7 @@ const LAND = (() => {                                  // заготовки: к
   }
   return { beach, peaks };
 })();
-const LEAF_TOTAL = 150;                  // листьев конопли
+const LEAF_TOTAL = 220;                  // листьев конопли (было 150 — Влад: «сделай 220»)
 const [BANANA_ZONES, COCONUT_ZONES, LEAF_ZONES] = (() => {         // [доля, () => случайная точка [x, z]]
   const rnd = (a, b) => a + Math.random() * (b - a), T = TERRAIN;
   const rect = (group, u0, u1, v0, v1) => () => { const p = group.localToWorld(V3(rnd(u0, u1), 0, -rnd(v0, v1))); return [p.x, p.z]; };
@@ -4536,7 +4540,10 @@ function updateBananas(dt, t) {
 // ---------- Пыль из-под колёс ----------
 // Когда машину несёт боком не по асфальту — по траве, песку, обочине, гравию, — из-под колёс поднимается пыль цвета
 // покрытия: клубы растут, поднимаются и тают. На асфальте, бетоне и настилах пыли нет, в воде тоже.
-const DUST_MAX = 700, DUST_COL = { earth: new THREE.Color('#c07a52'), sand: new THREE.Color('#ecd592'), grass: new THREE.Color('#8fae62') };
+// Там же брызги: колёса в воде (море, озеро, бассейн) выбивают капли вверх и в стороны — чем быстрее, тем больше, выше и
+// шире; капли падают обратно (у них есть тяжесть) и гаснут, коснувшись воды.
+const TIRE_SMOKE = new THREE.Color('#e4e2de');                                // дым шин на асфальте
+const DUST_MAX = 1400, SPLASH_COL = [new THREE.Color('#eef7fa'), new THREE.Color('#c4e4ee'), new THREE.Color('#dff0f4')], DUST_COL = { earth: new THREE.Color('#c07a52'), sand: new THREE.Color('#ecd592'), grass: new THREE.Color('#8fae62') };
 const dust = [];
 const dustGeo = new THREE.BufferGeometry();
 dustGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(DUST_MAX * 3), 3));
@@ -4562,14 +4569,50 @@ function dustKind(x, z) {
   const h = roadAt(x, z);
   return !beachSand.full(x, z) && ((h && h.d < h.road.half) || groundY(x, z) >= 1.25) ? DUST_COL.earth : DUST_COL.sand;   // обочина, гравий, площадка — земля; пляж — песок
 }
+// всплеск: что-то упало в воду в (x, z), ws — уровень воды, power 0…1 — сила (столб капель во все стороны)
+function splashAt(x, z, ws, power) {
+  for (let n = 0; n < 40 + 110 * power; n++) {
+    if (dust.length >= DUST_MAX) dust.shift();
+    const a = Math.random() * 6.283, r = Math.random() * 1.4, out = (1 + Math.random() * 3.5) * power;
+    dust.push({ x: x + Math.cos(a) * r, y: ws + 0.05, z: z + Math.sin(a) * r, col: SPLASH_COL[(Math.random() * 3) | 0],
+      vx: Math.cos(a) * out, vy: (2 + Math.random() * 6) * power + 1, vz: Math.sin(a) * out,
+      age: 0, life: 0.8 + Math.random() * 0.8, size: 0.12 + Math.random() * 0.18, shade: 0.88 + Math.random() * 0.16, g: 9.8, floor: ws - 0.05, grow: 0.4, a0: 0.9 });
+  }
+}
 function updateDust(dt, skid) {
+  const spd = Math.abs(car.speed);
+  if (spd > 0.8 && !(car.air > 0.05)) {                                       // брызги из-под колёс, стоящих в воде
+    const c = Math.cos(car.heading), s = Math.sin(car.heading), vx = -Math.sin(car.course) * car.speed, vz = -Math.cos(car.course) * car.speed;
+    for (const [lx, lz, share] of [[-CAR.trackRear, CAR.axle, 1], [CAR.trackRear, CAR.axle, 1], [-CAR.track, -CAR.axle, 0.8], [CAR.track, -CAR.axle, 0.8]]) {
+      const x = car.x + lx * c + lz * s, z = car.z - lx * s + lz * c, depth = waterDepth(x, z);
+      if (depth <= 0.03) continue;
+      const ws = surfaceY(x, z) + depth, deep = Math.min(1, 0.35 + depth / 0.35), out = Math.sign(lx), ox = c * out, oz = -s * out;
+      for (let n = spd * 6 * deep * share * dt + Math.random(); n >= 1; n--) {
+        if (dust.length >= DUST_MAX) dust.shift();
+        const side = (0.6 + spd * 0.16) * (0.3 + Math.random()), up = Math.min(10, 1.2 + spd * 0.24 * (0.35 + Math.random() * 0.9));
+        dust.push({ x: x + (Math.random() - 0.5) * 0.4, y: ws + 0.05, z: z + (Math.random() - 0.5) * 0.4, col: SPLASH_COL[(Math.random() * 3) | 0],
+          vx: vx * 0.3 + ox * side + (Math.random() - 0.5) * 1.4, vy: up, vz: vz * 0.3 + oz * side + (Math.random() - 0.5) * 1.4,
+          age: 0, life: 0.7 + Math.random() * 0.7, size: 0.09 + Math.random() * 0.13 + spd * 0.002, shade: 0.88 + Math.random() * 0.16, g: 9.8, floor: ws - 0.05, grow: 0.4, a0: 0.9 });
+      }
+    }
+  }
   if (skid) {
     const c = Math.cos(car.heading), s = Math.sin(car.heading), sp = Math.abs(car.speed);
     const power = Math.min(1, sp / 14) * Math.min(1, 0.35 + Math.abs(car.slip) / 0.5);
     const vx = -Math.sin(car.course) * car.speed, vz = -Math.cos(car.course) * car.speed;
     for (const [lx, lz, share] of [[-CAR.trackRear, CAR.axle, 1], [CAR.trackRear, CAR.axle, 1], [-CAR.track, -CAR.axle, 0.5], [CAR.track, -CAR.axle, 0.5]]) {
       const x = car.x + lx * c + lz * s, z = car.z - lx * s + lz * c, col = dustKind(x, z);
-      if (!col) continue;
+      if (!col) {                                                               // асфальт, бетон: дым из-под шин — светлый, растёт и тает дольше пыли
+        if (waterDepth(x, z) > 0.03) continue;
+        const sm = (keys.Space || (typeof TOUCH !== 'undefined' && TOUCH.hand)) ? 1 : Math.max(0, Math.min(1, (Math.abs(car.slip) - 0.14) / 0.35));   // в обычном быстром повороте (корма плывёт на 10–18°) дыма нет
+        for (let n = power * share * sm * 70 * dt + Math.random() * 0.6 * sm; n >= 1; n--) {
+          if (dust.length >= DUST_MAX) dust.shift();
+          dust.push({ x: x + (Math.random() - 0.5) * 0.4, y: surfaceY(x, z) + 0.15, z: z + (Math.random() - 0.5) * 0.4, col: TIRE_SMOKE,
+            vx: vx * 0.08 + (Math.random() - 0.5) * 1.4, vy: 0.4 + Math.random() * 0.9, vz: vz * 0.08 + (Math.random() - 0.5) * 1.4,
+            age: 0, life: 1.3 + Math.random() * 1.2, size: 0.5 + Math.random() * 0.45, shade: 0.92 + Math.random() * 0.12, grow: 3.2, a0: 0.42 });
+        }
+        continue;
+      }
       for (let n = power * share * 130 * dt + Math.random(); n >= 1; n--) {
         if (dust.length >= DUST_MAX) dust.shift();
         dust.push({ x: x + (Math.random() - 0.5) * 0.5, y: surfaceY(x, z) + 0.1, z: z + (Math.random() - 0.5) * 0.5, col,
@@ -4586,12 +4629,19 @@ function updateDust(dt, skid) {
     const d = dust[i];
     d.age += dt;
     if (d.age >= d.life) continue;
-    const k = d.age / d.life, drag = Math.exp(-2.2 * dt);
-    d.vx *= drag; d.vz *= drag; d.vy *= Math.exp(-1.2 * dt);
-    d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+    const k = d.age / d.life;
+    if (d.g) {                                                                // капля: летит и падает, на воде гаснет
+      const drag = Math.exp(-0.9 * dt); d.vx *= drag; d.vz *= drag; d.vy -= d.g * dt;
+      d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+      if (d.vy < 0 && d.y < d.floor) continue;
+    } else {
+      const drag = Math.exp(-2.2 * dt);
+      d.vx *= drag; d.vz *= drag; d.vy *= Math.exp(-1.2 * dt);
+      d.x += d.vx * dt; d.y += d.vy * dt; d.z += d.vz * dt;
+    }
     P[n * 3] = d.x; P[n * 3 + 1] = d.y; P[n * 3 + 2] = d.z;
     C[n * 3] = d.col.r * d.shade * light; C[n * 3 + 1] = d.col.g * d.shade * light; C[n * 3 + 2] = d.col.b * d.shade * light;
-    S[n] = d.size * (1 + 2.6 * k); A[n] = 0.62 * (1 - k) * (1 - k);
+    S[n] = d.size * (1 + (d.grow ?? 2.6) * k); A[n] = (d.a0 || 0.62) * (1 - k) * (1 - k);
     dust[n++] = d;
   }
   dust.length = n;
@@ -4736,6 +4786,7 @@ addEventListener('keydown', e => {
   if (!e.repeat && soundKeys(e)) return;   // громкость звука: «−», «=», M
   if (e.code === 'KeyO' && !e.repeat) { autopilot.on = !autopilot.on; if (autopilot.on) autopilotResync(); }
   if (e.code === 'KeyC' && !e.repeat) nextCar(1);       // следующая машина
+  if (e.code === 'KeyJ' && !e.repeat) { driftSet(!DRIFT.on); SOUND.note = { text: DRIFT.on ? 'DRIFT ASSIST ON' : 'DRIFT ASSIST OFF', until: performance.now() + 2000 }; }   // сравнить со старым заносом
   keys[e.code] = true; if (e.code.startsWith('Arrow') || e.code === 'Space') e.preventDefault(); });
 addEventListener('keyup', e => {
   keys[e.code] = false;
@@ -4965,8 +5016,21 @@ function update(dt) {
 // быстро заходит в поворот, а машину несёт прежним ходом — боком, со следами шин. Дальше — как решит водитель:
 //   отпустил рано — шины цепляются, машина уходит туда, куда смотрит нос (вход в прямой угол на скорости);
 //   держит — машину разворачивает кормой вперёд (полицейский разворот): она катится задом, газ — и поехала обратно.
+// Помощь в заносе (просил Влад: «чуть проще и больше эффектных возможностей, но чтобы дрифт оставался непростым и в руках»).
+// Всё слабое и включается только в заносе; J — включить / выключить, чтобы сравнить со старым поведением:
+//   counter — отпустил руль в заносе: передние колёса чуть встают по ходу (как у настоящей машины), занос гаснет мягче;
+//   power — газ в заносе держит и чуть углубляет угол (у полноприводных вдвое слабее), сброс газа — выпрямляет;
+//   drag — в управляемом заносе (до ~57°) скорость теряется на 20 % медленнее; в развороте — как раньше;
+//   lift — сброс газа или перекладка руля на скорости с большим рулём на долю секунды ослабляют заднее сцепление:
+//          у машин с запасом сцепления (жук) этого почти не видно, у Porsche и Lancia — можно сорвать корму без ручника.
+const DRIFT = { on: true, counter: 0.2, power: 0.25, powerAwd: 0.12, drag: 0.8, lift: 0.78, liftT: 0.35 };
+// переключатель на поле страницы (под ним — TOUCH); выбор запоминается, по умолчанию включено
+function driftSet(on) { DRIFT.on = on; try { localStorage.setItem('samui.drift', on ? '1' : '0'); } catch (e) {} const t = document.getElementById('driftToggle'); if (t) t.classList.toggle('on', on); }
+{ let saved = null; try { saved = localStorage.getItem('samui.drift'); } catch (e) {}
+  driftSet(saved !== '0'); const t = document.getElementById('driftToggle'); if (t) t.addEventListener('click', () => driftSet(!DRIFT.on)); }
 function drive(dt) {
   const S = CAR;
+  const assist = DRIFT.on && !S.bike, powerOver = S.powerOver ?? (/LANCIA|EVO|IMPREZA/.test(S.name) ? DRIFT.powerAwd : DRIFT.power);
   const T = typeof TOUCH !== 'undefined' ? TOUCH : { steer: 0, gas: 0, brake: 0, hand: false, crawl: 0 };   // сенсорный слой (touch.js): берётся большее из клавиш и касаний
   const up = k('KeyW', 'ArrowUp'), down = k('KeyS', 'ArrowDown');
   const left = k('KeyA', 'ArrowLeft'), right = k('KeyD', 'ArrowRight');
@@ -4981,6 +5045,10 @@ function drive(dt) {
   // педали нажимаются не мгновенно; тяга падает с ростом скорости
   const pedal = (v, to, press, release) => v + Math.max(-release * dt, Math.min(press * dt, to - v));
   const gasTo = ap && !manualPedals ? ap.gas : Math.max(up ? 1 : 0, T.gas, crawlGas);
+  if (assist && car.gas > 0.6 && gasTo === 0) car.lift = DRIFT.liftT;                     // сбросил газ — короткий «подхват» кормы
+  if (assist && steerIn && car.lastSteer && Math.sign(steerIn) !== Math.sign(car.lastSteer) && car.lastSteerAgo < 0.4 && Math.abs(car.slip) > 0.15) car.lift = DRIFT.liftT;   // перекладка в заносе (между клавишами бывает кадр без руля)
+  if (steerIn) { car.lastSteer = steerIn; car.lastSteerAgo = 0; } else car.lastSteerAgo = (car.lastSteerAgo || 0) + dt;
+  car.lift = Math.max(0, (car.lift || 0) - dt);
   const brakeTo = ap && !manualPedals ? ap.brake : Math.max(down ? 1 : 0, T.brake, crawlBack);
   car.gas = pedal(car.gas, gasTo, S.gasPress, S.pedalRelease);
   car.brake = pedal(car.brake, brakeTo, S.brakePress, S.pedalRelease);
@@ -4996,7 +5064,7 @@ function drive(dt) {
   if (car.speed > 0) car.speed -= S.brake * car.brake * dt;
   else if (car.speed > -S.maxReverse) car.speed = Math.max(-S.maxReverse, car.speed - S.accel * 0.6 * car.brake * dt);   // задний ход — не быстрее предела
 
-  const drag = (!gasTo && !brakeTo ? S.drag : 0) + (hand ? S.handBrake : 0) + S.slideDrag * Math.abs(across);
+  const drag = (!gasTo && !brakeTo ? S.drag : 0) + (hand ? S.handBrake : 0) + S.slideDrag * Math.abs(across) * (assist && Math.abs(car.slip) < 1 ? DRIFT.drag : 1);
   if (drag) {
     const s = Math.sign(car.speed);
     car.speed -= s * Math.min(Math.abs(car.speed), drag * dt);
@@ -5015,14 +5083,16 @@ function drive(dt) {
   let steerLimit = S.maxSteer * (1 - 0.85 * Math.min(1, Math.abs(car.speed) / S.maxSpeed));
   if (S.latMax) steerLimit = Math.min(steerLimit, Math.atan(S.latMax * S.wheelbase / Math.max(1, car.speed * car.speed)));   // быстрой машине руль на скорости зажимается сильнее
   const auto = ap && !manualSteer;
-  const want = auto ? Math.max(-steerLimit, Math.min(steerLimit, ap.steer)) : target * steerLimit;
+  const counter = assist && !hand && !target && !auto && car.speed > 4 && Math.abs(car.slip) > 0.17;   // руль отпущен в заносе — колёса чуть встают по ходу
+  const want = auto ? Math.max(-steerLimit, Math.min(steerLimit, ap.steer)) : counter ? Math.max(-steerLimit, Math.min(steerLimit, -car.slip * 0.6 * DRIFT.counter)) : target * steerLimit;
   const rate = target || auto ? S.steerRate : S.steerReturn;
   car.steer += Math.max(-rate * dt, Math.min(rate * dt, want - car.steer));
 
   // велосипедная модель + инерция кузова по курсу; в заносе нос тянет обратно к ходу
   if (!hand) car.spun = false;
   const steerYaw = (car.speed * along / S.wheelbase) * Math.tan(car.steer) * (hand ? (car.spun ? 0 : S.handYaw) : 1);
-  const yawTarget = steerYaw - (hand ? S.handAlign : S.align) * 0.5 * Math.sin(2 * car.slip);
+  const power = assist && !hand && car.speed > 5 && Math.abs(car.slip) > 0.12 ? Math.sign(car.slip) * powerOver * car.gas * Math.min(1, (Math.abs(car.slip) - 0.12) / 0.2) : 0;   // газ держит угол
+  const yawTarget = steerYaw - (hand ? S.handAlign : S.align) * 0.5 * Math.sin(2 * car.slip) + power;
   // на ручнике вращение раскручивается быстро, а гаснет медленно — машину доворачивает по инерции
   const yawLag = !hand ? S.yawLag : Math.abs(yawTarget) > Math.abs(car.yawRate) && yawTarget * car.yawRate >= 0 ? S.handYawLag : S.spinLag;
   car.yawRate += (yawTarget - car.yawRate) * (1 - Math.exp(-dt / yawLag));
@@ -5031,6 +5101,7 @@ function drive(dt) {
   // ход догоняет нос: шины поворачивают его не быстрее, чем позволяет сцепление; газ в заносе тоже тянет ход к носу
   // под газом в заносе шины цепляются втрое медленнее: машину можно вести боком
   car.grip = hand ? S.handGrip : Math.min(S.grip, car.grip + (S.grip - S.handGrip) * dt / (S.gripBack * (car.gas > 0.5 && Math.abs(car.slip) > 0.15 ? 3 : 1)));
+  if (assist && car.lift > 0 && !hand && car.speed > 14 && Math.abs(car.steer) > 0.6 * steerLimit) car.grip = Math.min(car.grip, S.grip * DRIFT.lift);   // подхват кормы
   let slip = car.heading - car.course;
   slip = Math.atan2(Math.sin(slip), Math.cos(slip));
   if (Math.abs(slip) > Math.PI / 2) {                    // развернуло дальше, чем боком: теперь едем другим концом вперёд
@@ -5088,7 +5159,7 @@ let camYaw = car.heading, camSlope = 0;
 let camLookYaw = 0, camLookUp = 0, camLookSpin = 0;   // поворот и подъём камеры от джойстика обзора (touch.js), докрутка при дожатом крае
 function updateCamera(dt, snap) {
   // в заносе камера смотрит между носом и ходом — видно, как несёт боком (при развороте кормой вперёд — без скачка)
-  let d = car.heading - 0.6 * Math.sin(car.slip) * Math.sign(car.speed) * Math.min(1, Math.abs(car.speed) / 4) - camYaw;
+  let d = car.heading - 0.7 * Math.sin(car.slip) * Math.sign(car.speed) * Math.min(1, Math.abs(car.speed) / 4) - camYaw;
   d = Math.atan2(Math.sin(d), Math.cos(d));              // кратчайший угол
   camYaw += snap ? d : d * (1 - Math.exp(-4 * dt));
   // пока держишь B — тот же вид, но спереди: камера перед машиной на том же расстоянии и высоте, смотрит назад, на неё
@@ -5563,7 +5634,7 @@ function fpsLayout() {
   const margin = (innerWidth - canvas.getBoundingClientRect().width) / 2;
   fpsBox.hidden = COARSE || margin < 40;                    // счётчик кадров — на правом поле, если оно есть (на телефоне — нет)
   fpsBox.style.fontSize = Math.max(9, Math.min(13, Math.floor(margin / 11))) + 'px';
-  const tt = document.getElementById('touchToggle'); if (tt) tt.hidden = margin < 34;      // переключатель ручек — на левом поле, если оно есть
+  for (const id of ['touchToggle', 'driftToggle']) { const tt = document.getElementById(id); if (tt) tt.hidden = margin < 34; }   // переключатели — на левом поле, если оно есть
 }
 addEventListener('resize', fpsLayout);
 // Кнопка телепортов — круглая, между мини-картой и спидометром, на ней метка-булавка (ui_icons/teleport_pin_white_flat.png,

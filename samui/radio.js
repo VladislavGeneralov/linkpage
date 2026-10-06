@@ -51,6 +51,8 @@ async function radioApi(path, params) {
   }
 }
 const radioProgressive = (t) => t.media && t.media.transcodings && t.media.transcodings.find(x => x.format && x.format.protocol === 'progressive');
+// только 30-секундный отрывок: трек SoundCloud Go+ (policy SNIP) — без подписки целиком не отдаётся; такие в очередь не берём
+const radioPreview = (t) => t.policy === 'SNIP' || (radioProgressive(t) || {}).snipped === true || (t.full_duration && t.duration && t.duration < t.full_duration - 1000);
 function radioStatus(text) { radio.status = text; }
 
 // ссылка на трек или плейлист -> очередь -> играть с первого трека.
@@ -72,13 +74,15 @@ async function radioLoad(url, remember = false, shuffle = false) {
       tracks = tracks.map(t => byId[t.id] || t);
     }
     if (gen !== radio.gen) return;
-    const playable = tracks.filter(radioProgressive);      // треки только с HLS пока пропускаем
-    if (!playable.length) throw new Error('no tracks with a direct stream');
+    const direct = tracks.filter(radioProgressive);        // треки только с HLS пока пропускаем
+    const playable = direct.filter(t => !radioPreview(t));  // и те, у которых без подписки есть только отрывок 0:30
+    if (!playable.length) throw new Error(direct.length ? 'only 30 s previews here (SoundCloud Go+)' : 'no tracks with a direct stream');
     radio.queue = playable; radio.listTitle = res.kind === 'playlist' ? (res.title || '') : '';
     radio.fails = 0; radio.dir = 1;
     if (remember) store.set('tg_radio_url', url);
     await radioPlayIndex(shuffle ? Math.floor(Math.random() * playable.length) : 0);
-    if (tracks.length > playable.length) radioStatus(radio.status + ' (skipped, no direct stream: ' + (tracks.length - playable.length) + ')');
+    if (tracks.length > direct.length) radioStatus(radio.status + ' (skipped, no direct stream: ' + (tracks.length - direct.length) + ')');
+    if (direct.length > playable.length) radioStatus(radio.status + ' (skipped, 30 s previews: ' + (direct.length - playable.length) + ')');
   } catch (e) {
     if (gen !== radio.gen) return;
     if (radio.mode === 'stream' && radio.queue.length) {   // новая ссылка не загрузилась — прежний список остаётся
@@ -109,6 +113,10 @@ async function radioPlayIndex(i, at = 0) {
     if (playing) radioStart();
   } catch (e) {                                            // не загрузился — пропускаем; если так со всей очередью — встроенный трек
     if (gen !== radio.gen) return;
+    // а если это было продолжение посреди трека (ссылка протухла) — сбой, скорее всего, разовый: ещё раз тот же трек через 2 с,
+    // а не следующий (раньше трек обрывался, если обновление ссылки один раз не удалось)
+    if (at > 0 && radio.retries++ < 4) { console.info('радио: ссылка не обновилась (' + e.message + '), повтор'); setTimeout(() => { if (gen === radio.gen) radioPlayIndex(radio.idx, at); }, 2000); return; }
+    console.info('радио: трек пропущен (' + e.message + ')');
     if (++radio.fails >= Math.min(n, 6)) { radioStatus('stream unavailable (' + e.message + ') - built-in track playing'); return radioLocal(); }
     return radioPlayIndex(radio.idx + radio.dir);
   }
@@ -593,12 +601,21 @@ function radioInit() {
     if (radio.retries && el.currentTime > radio.retryFrom + 8) radio.retries = 0;   // 8 с ровной игры — счёт попыток заново
     radio.lastTime = el.currentTime; radio.fails = 0;
   });
-  el.addEventListener('ended', () => { radio.dir = 1; radioPlayIndex(radio.idx + 1); });    // после последнего — сначала
+  el.addEventListener('ended', () => {
+    // поток мог оборваться раньше конца (ссылка протухла посреди скачивания — браузер принимает обрыв за конец):
+    // если до конца трека по данным SoundCloud ещё больше 5 с — это не конец, берём новую ссылку и продолжаем с того же места
+    const t = radio.queue[radio.idx], full = t && t.duration ? t.duration / 1000 : 0;
+    if (radio.mode === 'stream' && full && radio.lastTime < full - 5 && radio.retries++ < 4) {
+      console.info('радио: поток оборвался на ' + Math.round(radio.lastTime) + ' из ' + Math.round(full) + ' с, продолжаю');
+      radio.retryFrom = radio.lastTime; return radioPlayIndex(radio.idx, radio.lastTime);
+    }
+    radio.dir = 1; radioPlayIndex(radio.idx + 1);                                          // после последнего — сначала
+  });
   el.addEventListener('error', () => {
     if (radio.mode !== 'stream' || !el.src) return;
     // ссылка на поток живёт считанные минуты: посреди длинного микса берём новую и продолжаем с того же места
-    if (radio.retries++ < 3) { radio.retryFrom = radio.lastTime; radioPlayIndex(radio.idx, radio.lastTime); }
-    else { radio.retries = 0; radio.fails++; radioPlayIndex(radio.idx + radio.dir); }
+    if (radio.retries++ < 4) { radio.retryFrom = radio.lastTime; radioPlayIndex(radio.idx, radio.lastTime); }
+    else { console.info('радио: трек пропущен (поток не играет после 4 попыток)'); radio.retries = 0; radio.fails++; radioPlayIndex(radio.idx + radio.dir); }
   });
   addEventListener('pointerdown', radioPointerDown);
   addEventListener('pointermove', radioPointerMove);

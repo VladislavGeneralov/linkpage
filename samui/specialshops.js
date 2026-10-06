@@ -203,7 +203,7 @@ function buildScooterRental() {
   scooterRow(lot.g, 301, 12, -lot.len / 2 + 1.2, 1.2, 1.15, 0, -Math.PI / 2, 0.26); scooterRow(lot.g, 313, 12, -lot.len / 2 + 1.2, -1.6, 1.15, 0, -Math.PI / 2, 0.26);
   for (const u of [5.5, 7.2]) templeProp(lot.g, u, -(F - 1.4), (P) => dirtBike(P, 0.26, u > 6 ? '#e8782a' : '#2a8a3a'), { kind: 'small', mat: 'metal', color: '#2a2a2c', r: 0.9, loss: 0.03 });
   rentalSign(lot.g, -lot.len / 2 + 1.6, -(F + 1.6), 0.26, [['MOTORBIKE', 0.07], ['FOR RENT', 0.07], ['150 BAHT / DAY', 0.035]], '#f2c81e', '#d42020');
-  townDone(lot, S, null, 0, 0, 2.9);                                                          // навес не стена: под ним проезжают
+  townDone(lot, S, null, -F, F, 2.9);                                                         // навес — крупная постройка: твёрдый целиком (просил Влад)
   const a = lot.g.localToWorld(new THREE.Vector3(-12, 0, F + lot.FR - 2.6)), b = lot.g.localToWorld(new THREE.Vector3(-11, 0, F + lot.FR - 2.6));
   LANDMARKS.push({ name: 'MOTORBIKE RENTAL', x: a.x, z: a.z, heading: Math.atan2(-(b.x - a.x), -(b.z - a.z)) });
 }
@@ -218,7 +218,7 @@ function buildHarleyRental() {
   const COLS = ['#b8202a', '#5a6a3a', '#e8782a', '#1c1c1e', '#2a4a8a'];
   COLS.forEach((c, k) => { const u = -lot.len / 2 + 1.8 + k * 2.6; templeProp(lot.g, u, 0.2, (P) => harley(P, 0.26, c, k % 2 === 0), { kind: 'small', mat: 'metal', color: c, r: 1.0, loss: 0.03 }); });
   rentalSign(lot.g, lot.len / 2 - 1.4, -(F + 1.6), 0.26, [['BIG BIKES', 0.06], ['FOR RENT', 0.06], ['DAY / WEEK', 0.035]], '#1c1c1e', '#e8782a');
-  townDone(lot, S, null, 0, 0, 2.9);
+  townDone(lot, S, null, -F, F, 2.9);                                                         // твёрдый целиком: сквозь навес не проехать
   const a = lot.g.localToWorld(new THREE.Vector3(-10, 0, F + lot.FR - 2.6)), b = lot.g.localToWorld(new THREE.Vector3(-9, 0, F + lot.FR - 2.6));
   LANDMARKS.push({ name: 'HARLEY RENTAL', x: a.x, z: a.z, heading: Math.atan2(-(b.x - a.x), -(b.z - a.z)) });
 }
