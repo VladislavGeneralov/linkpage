@@ -5,7 +5,7 @@
 */
 const Instruments = (() => {
   let audioContext = null;
-  let masterBus, fx1Send, delayNode, delayFeedback, delayHPF;
+  let masterBus, fx1Send, delayNode, delayFeedback, delayHPF, delayReturn;
   let masterDrive, masterComp, masterFilter, masterMute;
   const channelNodes = {};
 
@@ -35,6 +35,45 @@ const Instruments = (() => {
   function setTempo(newBpm) {
     bpm = newBpm;
     if (delayNode) delayNode.delayTime.value = getDelayTime();
+  }
+
+  // ============================
+  // DELAY DUCK — the delay time follows bpm, so dragging the bpm fader
+  // smears the echoes into a pitch-warbling mess. While the fader moves the
+  // delay return fades out (and the feedback is cut, so the loop flushes
+  // the smeared repeats); on release it fades back in, much slower.
+  // Only the delay return is touched — the dry mix stays exactly as loud.
+  // ============================
+  const DELAY_DUCK_TIME = 0.8;   // s, fade-out to silence
+  const DELAY_RETURN_TIME = 3;   // s, fade back to full
+  let delayDucked = false;
+
+  // freezes a param at whatever value it's currently gliding through, so a
+  // new fade starts from there instead of jumping
+  function holdParam(param, now) {
+    const current = param.value;
+    param.cancelScheduledValues(now);
+    param.setValueAtTime(current, now);
+  }
+
+  function duckDelay() {
+    if (!delayReturn || delayDucked) return;
+    delayDucked = true;
+    const now = audioContext.currentTime;
+    holdParam(delayReturn.gain, now);
+    delayReturn.gain.linearRampToValueAtTime(0, now + DELAY_DUCK_TIME);
+    holdParam(delayFeedback.gain, now);
+    delayFeedback.gain.linearRampToValueAtTime(0, now + DELAY_DUCK_TIME);
+  }
+
+  function releaseDelay() {
+    if (!delayReturn || !delayDucked) return;
+    delayDucked = false;
+    const now = audioContext.currentTime;
+    holdParam(delayReturn.gain, now);
+    delayReturn.gain.linearRampToValueAtTime(1, now + DELAY_RETURN_TIME);
+    holdParam(delayFeedback.gain, now);
+    delayFeedback.gain.linearRampToValueAtTime(delFB, now + DELAY_RETURN_TIME / 3);
   }
 
   // ============================
@@ -256,7 +295,9 @@ const Instruments = (() => {
     delayFeedback.connect(delayHPF);
     delayHPF.connect(delayNode);
     fx1Send.connect(delayNode);
-    delayNode.connect(masterBus);
+    delayReturn = audioContext.createGain();
+    delayNode.connect(delayReturn);
+    delayReturn.connect(masterBus);
 
     return audioContext;
   }
@@ -610,6 +651,8 @@ const Instruments = (() => {
     init,
     trigger,
     setTempo,
+    duckDelay,
+    releaseDelay,
     setMasterDrive,
     setMasterFilter,
     setMasterMute,

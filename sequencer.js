@@ -250,7 +250,14 @@ bpmSlider.addEventListener("input", () => {
   TEMPO = Number(bpmSlider.value);
   bpmValue.textContent = TEMPO;
   if (isPlaying) Instruments.setTempo(TEMPO);
+  Instruments.duckDelay(); // delay fades out while the fader moves, see Instruments.duckDelay
 });
+
+// "change" fires when the fader is let go; pointerup/cancel on window as a
+// backstop in case the release happens off the slider
+bpmSlider.addEventListener("change", () => Instruments.releaseDelay());
+window.addEventListener("pointerup", () => Instruments.releaseDelay());
+window.addEventListener("pointercancel", () => Instruments.releaseDelay());
 
 const driveSlider = document.getElementById("seq-drive");
 const driveValue = document.getElementById("seq-drive-value");

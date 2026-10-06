@@ -115,6 +115,11 @@ a {
   flex-shrink: 0;
 }
 
+/* SCDJ wears the soundcloud cloud upside down, same as its own favicon */
+.icon--flip {
+  transform: rotate(180deg);
+}
+
 a:hover {
   color: #D5A430;
 }
