@@ -89,6 +89,89 @@ h2 {
   font-size: 20px;
 }
 
+/* INFO "i" next to the nickname — a visually hidden checkbox + its label,
+   so the bio text is always in the HTML (crawlers read it) and toggles
+   without JS. nowrap keeps the "i" on the same line as the last word. */
+.nowrap {
+  white-space: nowrap;
+}
+
+.info-toggle {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  opacity: 0;
+}
+
+.info-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 10px;
+  vertical-align: 4px; /* lifts the circle's bottom edge off the text baseline */
+  box-sizing: border-box;
+  border: 1px solid #6d6d6d;
+  border-radius: 50%;
+  background: transparent;
+  color: #6d6d6d; /* same grey as the sequencer fader labels */
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+/* the "i" is drawn, not typed: a font glyph sits off-center in the circle
+   because the line box reserves descender space the "i" doesn't use.
+   6px tall = roughly the old 12px glyph / 1.5 */
+.info-btn svg {
+  display: block;
+  width: 2px;
+  height: 6px;
+}
+
+.info-btn:hover,
+.info-toggle:checked ~ h2 .info-btn {
+  color: #D5A430;
+  border-color: #D5A430;
+}
+
+.info-toggle:focus-visible ~ h2 .info-btn {
+  outline: 2px solid #D5A430;
+  outline-offset: 2px;
+}
+
+/* same grey as the sequencer slider tracks, small radius like .seq-step */
+.info-text {
+  display: none;
+  margin: 8px 0;
+  padding: 10px 14px;
+  background: #3a3a3a;
+  border-radius: 4px;
+}
+
+.info-text p {
+  font-size: 12.3px; /* 16px body text / 1.3 */
+}
+
+/* the box's padding already spaces the text from its edges — without
+   this the first/last p margins would stack on top of it */
+.info-text p:first-child {
+  margin-top: 0;
+}
+
+.info-text p:last-child {
+  margin-bottom: 0;
+}
+
+.info-toggle:checked ~ .info-text {
+  display: block;
+}
+
 /* TEXT vs LINKS hierarchy */
 p {
   margin: 6px 0;
