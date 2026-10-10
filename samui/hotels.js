@@ -196,6 +196,28 @@ function lolitaBungalow(S, cu, cv, dir, y0, pal) {
   for (let k = 1; k < 8; k++) { const t = k / 8, e = t < 0.5 ? [-2.9 + t * 2 * 2.9 * 0.999, E + 0.3 + t * 2 * (T - E - 0.6)] : [(t - 0.5) * 2 * 2.9, T - 0.3 - (t - 0.5) * 2 * (T - E - 0.6)]; S.rod(P(0, E + 0.36, -0.03), P(e[0] * 0.92, e[1] - 0.06, -0.03), 0.05, WOOD); }
   for (const s of [-1, 1]) { S.rod(P(s * HW, E, F0), P(0, T, F0), 0.16, WOOD); S.rod(P(s * HW, E, F1), P(0, T, F1), 0.16, WOOD); }
 }
+const LOLITA_SPOT = { g: null };
+// Рыбацкие лодки на якоре — в воде поодаль, левее отеля, если смотреть на море (Влад, 2026-10-11). Ставятся после посёлков
+// и пляжей (index.html): рядом уже стоят лодки Маенама, новые обходят их не ближе 16 м. Твёрдые — townBoat (towns.js).
+function lolitaBoats(n = 4) {
+  const g = LOLITA_SPOT.g; if (!g) return;
+  const rnd = seededRandom(913), put = [];
+  const busy = (x, z) => solids.some(P => { let cx = 0, cz = 0; for (const p of P) { cx += p[0]; cz += p[1]; } return Math.hypot(cx / P.length - x, cz / P.length - z) < 16; })
+    || put.some(([a, b]) => Math.hypot(a - x, b - z) < 16);
+  g.updateMatrixWorld(true);
+  for (let v = 44; v < 140 && put.length < n; v += 7) {
+    let u = 30, w = g.localToWorld(new THREE.Vector3(u, 0, -v));
+    while (u < 170 && groundY(w.x, w.z) > -0.4) { u += 2; w = g.localToWorld(new THREE.Vector3(u, 0, -v)); }
+    if (u >= 170) continue;
+    for (const off of [12 + (v % 3) * 6, 30, 20]) {
+      w = g.localToWorld(new THREE.Vector3(u + off, 0, -v));
+      if (groundY(w.x, w.z) > -0.4 || busy(w.x, w.z)) continue;
+      put.push([w.x, w.z]);
+      townBoat(boatFisher, w.x, w.z, g.rotation.y + (rnd() - 0.5) * 1.2 + (rnd() < 0.3 ? Math.PI : 0), rnd);
+      break;
+    }
+  }
+}
 function buildLolita() {
   const g = spotGroup('lolita'), sp = g.userData.spot, L = sp.y, S = sculptor(), G = (u, v) => spotGround(g, u, v);
   const RD = roadEdgeU(g, -30, -70), GREEN = ['#3f9a6a', '#368a5e', '#a85a34'], RED = ['#b8453a', '#a63c32', '#7a2a24'];
@@ -253,6 +275,7 @@ function buildLolita() {
     [-27, 12.2, 'areca'], [-10, 12.2, 'areca'], [-19, -12.2, 'areca'], [-2, -12.2, 'areca'], [-27, -12.4, 'bush'], [-14.5, 12.4, 'bush'], [-6, -12.4, 'bush'], [3, 12.4, 'bush'],
     [-33, 14, 'bush'], [-33, -8, 'bush'], [-41, 20, 'coconut'], [-40, -26, 'coconut'], [-30, 30, 'coconut'], [-6, 30.5, 'fan'], [-18, -30.5, 'fan'], [6, -29, 'coconut']]);
   templeKeepOut(g, RD + 0.5, 52, -33, 33);
+  LOLITA_SPOT.g = g;                                // рыбацкие лодки левее отеля ставятся в самом конце: lolitaBoats()
   spotPlace('БУНГАЛО ЛОЛИТА', g, -39, 0, 1, 0);
 }
 

@@ -154,7 +154,7 @@ const CARS = {
   beetle: {
     name: 'VOLKSWAGEN BEETLE', build: () => buildBeetle(), lamp: 0.52,   // lamp — фары от оси, м
     maxSpeed: 36,            // м/с — предельная скорость на ровном асфальте (~130 км/ч)
-    maxReverse: 8,           // м/с — задним ходом
+    maxReverse: 16,          // м/с — задним ходом (все пределы заднего хода удвоены 2026-10-11 по просьбе Влада)
     accel: 5.5,              // м/с² — разгон с места; к предельной скорости тяга спадает до 40% (до максимума — около 11 с)
     brake: 14,               // м/с² — торможение (со 130 км/ч до нуля — за 2.6 с)
     drag: 2,                 // м/с² — накат: замедление с отпущенными педалями
@@ -183,7 +183,7 @@ const CARS = {
   porsche: {
     name: 'PORSCHE 911', build: () => buildPorsche(), lamp: 0.6,
     maxSpeed: 61,            // м/с — 220 км/ч (у настоящего 260; остров в игре втрое меньше)
-    maxReverse: 10,          // м/с
+    maxReverse: 20,          // м/с
     accel: 8.5,              // м/с² — до 100 км/ч около 4 с, до предельной — около 12 с
     brake: 19,               // м/с² — со 100 км/ч до нуля за 1.5 с
     drag: 1.6,               // м/с² — накат
@@ -200,7 +200,7 @@ const CARS = {
   lancia: {
     name: 'LANCIA DELTA', build: () => buildLancia(), lamp: 0.5,
     maxSpeed: 53,            // м/с — 190 км/ч (у настоящей 220)
-    maxReverse: 10,          // м/с
+    maxReverse: 20,          // м/с
     accel: 7.2,              // м/с² — до 100 км/ч около 5.3 с
     brake: 18,               // м/с² — со 100 км/ч до нуля за 1.6 с
     drag: 1.9,               // м/с² — накат
@@ -212,19 +212,20 @@ const CARS = {
     align: 1.2, gripBack: 0.3, slideDrag: 3.2,     // полный привод: в скольжении скорость почти не теряется, сцепление возвращается быстро
     handGrip: 5, handBrake: 2.3, handYaw: 1.9, handYawLag: 0.16, spinLag: 0.7, handAlign: 1.4,
   },
-  // Honda Wave 110i — скутер-андербон. Цифры — предложение: лёгкий и вёрткий, руль мгновенный, но медленный (100 км/ч)
-  // и на пределе срывается раньше машин. bike — одноколейный: в повороте наклоняется весь, вместе с колёсами.
+  // Honda Wave 110i — скутер-андербон. Цифры — предложение: лёгкий и вёрткий, 130 км/ч, на пределе срывается
+  // раньше машин. База короткая (1.2 м), поэтому угол руля и предел бокового ускорения меньше, чем у машин, — иначе поворачивает
+  // вдвое резче жука. bike — одноколейный: в повороте наклоняется весь, вместе с колёсами.
   wave: {
     name: 'HONDA WAVE', build: () => buildScooter(SCOOTERS.wave), lamp: 0.04, bike: true,
-    maxSpeed: 28,            // м/с — 100 км/ч
-    maxReverse: 2,           // м/с — задом только откатывается
-    accel: 4.6,              // м/с² — до 60 км/ч за 4.5 с
+    maxSpeed: 36,            // м/с — 130 км/ч (Влад: «макс скорость ему можно сделать больше»; было 100)
+    maxReverse: 4,           // м/с — задом только откатывается
+    accel: 5.2,              // м/с² — до 60 км/ч за 4 с
     brake: 11,               // м/с²
     drag: 1.7,               // м/с² — накат
     gasPress: 1.8, brakePress: 2.4, pedalRelease: 4,
-    maxSteer: 0.6, wheelbase: 1.227,
-    steerRate: 1.7, steerReturn: 2.6, yawLag: 0.06,
-    latMax: 40,              // м/с² — предел бокового ускорения от руля
+    maxSteer: 0.35, wheelbase: 1.227,   // при короткой базе 0.6 рад поворачивало вдвое резче жука (Влад: «очень резко поворачивает»)
+    steerRate: 1.0, steerReturn: 1.8, yawLag: 0.1,
+    latMax: 34,              // м/с² — предел бокового ускорения от руля
     grip: 46,                // м/с² — запас маленький: резкий руль на скорости — и заднее колесо едет
     align: 1.5, gripBack: 0.35, slideDrag: 6,
     handGrip: 6, handBrake: 3.45, handYaw: 1.4, handYawLag: 0.15, spinLag: 0.5, handAlign: 2.0,
@@ -235,7 +236,7 @@ const CARS = {
   dmax: {
     name: 'ISUZU D-MAX', build: () => buildDmax(), lamp: 0.72,
     maxSpeed: 47,            // м/с — 170 км/ч
-    maxReverse: 9,           // м/с
+    maxReverse: 18,          // м/с
     accel: 5.0,              // м/с² — до 100 км/ч около 8 с
     brake: 13,               // м/с²
     drag: 2.2,               // м/с² — накат
@@ -252,7 +253,7 @@ const CARS = {
   city: {
     name: 'HONDA CITY', build: () => buildCity(), lamp: 0.58,
     maxSpeed: 50,            // м/с — 180 км/ч
-    maxReverse: 9,           // м/с
+    maxReverse: 18,          // м/с
     accel: 6.0,              // м/с² — до 100 км/ч около 6.5 с
     brake: 16,               // м/с²
     drag: 1.9,               // м/с² — накат
@@ -269,7 +270,7 @@ const CARS = {
   evo: {
     name: 'MITSUBISHI LANCER EVO', build: () => buildEvo(), lamp: 0.62,
     maxSpeed: 58,            // м/с — 210 км/ч
-    maxReverse: 10,          // м/с
+    maxReverse: 20,          // м/с
     accel: 8.0,              // м/с² — до 100 км/ч около 4.6 с
     brake: 19,               // м/с²
     drag: 1.8,               // м/с² — накат
@@ -285,7 +286,7 @@ const CARS = {
   impreza: {
     name: 'SUBARU IMPREZA WRX', build: () => buildImpreza(), lamp: 0.6,
     maxSpeed: 56,            // м/с — 200 км/ч
-    maxReverse: 10,          // м/с
+    maxReverse: 20,          // м/с
     accel: 7.4,              // м/с² — до 100 км/ч около 5 с
     brake: 18,               // м/с²
     drag: 1.8,               // м/с² — накат
@@ -413,11 +414,19 @@ const outMat = new THREE.ShaderMaterial({
   uniforms: {
     tLow: { value: lowRT.texture }, k: { value: FISHEYE }, aspect: { value: FISH_ASPECT },
     res: { value: new THREE.Vector2(RES_W, RES_H) },
+    ripAmt: { value: 0 }, ripSize: { value: 1 }, ripPhase: { value: 0 }, green: { value: 0 },   // «травка»: рябь и зелень (WEED_FX)
   },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tLow; uniform float k, aspect;
+    uniform sampler2D tLow; uniform float k, aspect, ripAmt, ripSize, ripPhase, green;
     uniform vec2 res; varying vec2 vUv;
+    // кольцевая линза (как рябь в ангаре Broken Bus): точка выборки сдвигается по радиусу на ripAmt·sin(2πr/ripSize + фаза)
+    vec2 ripple(vec2 uv) {
+      vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+      float r = length(p);
+      float sc = r > 0.0 ? (r + ripAmt * sin(6.2831853 * r / ripSize + ripPhase)) / r : 1.0;
+      return clamp(p * sc / vec2(aspect, 1.0) + 0.5, 0.0, 1.0);
+    }
     vec2 fish(vec2 uv) {
       vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
       float r2 = dot(p, p) / (0.25 * (aspect * aspect + 1.0));   // 1 — в углу кадра
@@ -426,7 +435,12 @@ const outMat = new THREE.ShaderMaterial({
     }
     void main() {
       vec2 uvq = (floor(vUv * res) + 0.5) / res;                // пиксельная сетка мира
-      vec3 c = texture2D(tLow, fish(uvq)).rgb;
+      vec3 c = texture2D(tLow, fish(ripAmt > 0.0 ? ripple(uvq) : uvq)).rgb;
+      if (green > 0.0) {                                        // чуть зеленее и сочнее
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(vec3(l), c, 1.0 + 0.45 * green) * vec3(1.0 - 0.05 * green, 1.0 + 0.08 * green, 1.0 - 0.07 * green);
+        c = clamp(c, 0.0, 1.0);
+      }
       gl_FragColor = vec4(c, 1.0);
     }`,
   depthTest: false, depthWrite: false,
@@ -3508,7 +3522,7 @@ const accessRoad = (() => {
 // ---------- Пирсы ----------
 LAZY.x = frames[0].p.x; LAZY.z = frames[0].p.z;                  // старт: вокруг него постройки строятся сразу, дальше — после старта (later)
 buildPiers();                            // шесть причалов Самуи (piers.js): настилы проезжие, с края — в воду
-buildFerry();                            // паром Самуи — Панган от пирса Маенам, по расписанию (ferry.js)
+buildFerry();                            // паромы Самуи — Панган от всех шести пирсов, по расписанию (ferry.js)
 buildLandmarks();                        // достопримечательности (landmarks.js)
 buildTemples();                          // храмы (temples.js)
 buildStores();                           // MR.DIY и каннабис-шопы (stores.js)
@@ -3522,6 +3536,7 @@ buildSights();                           // Хин Та и Хин Яй, Лад �
 buildBeaches();                          // пляжи Чавенг, Ламай, Чонг Мон, Силвер; Бопхут и Маенам — оформление (beaches.js)
 buildDistricts();                        // недоработанные районы: бары северо-востока, юг, больница, Big C (districts.js)
 buildSpecialShops();                     // особые магазины: музыка, портные, тату, змеи, прокат (specialshops.js)
+lolitaBoats();                           // рыбацкие лодки в воде левее Лолиты — после посёлков и пляжей, в обход их лодок (hotels.js)
 buildRoadside();                         // столбы с проводами, лавки в посёлках, указатели, стоянки у плантаций (roadside.js)
 // аэродром и станции локаторов за дымкой тоже не рисуются — вместе с пирсами (far — дальность с запасом на размер объекта)
 for (const [g, far] of [[airportGroup, 2250], ...radarSites.map(g => [g, 1750])]) { g.userData.c = g.getWorldPosition(new THREE.Vector3()); g.userData.far = far; pierGroups.push(g); }
@@ -4490,6 +4505,28 @@ for (let i = 0; i < COCONUT_TOTAL; i++) { const spot = bananaSpot(null, true); i
 for (let i = 0; i < LEAF_TOTAL; i++) { const spot = bananaSpot(null, false, true); if (spot) addBanana(...spot, false, true); }
 const bananaPrev = { x: null, z: 0 };    // где была машина кадр назад (на большой скорости банан не проскочить)
 const bananaNear = { list: [], x: Infinity, z: 0 };   // плоды, которыми занят кадр: ближние, собранные (ждут или тают) и растущие; список обновляется, когда камера ушла на 40 м
+// Лист конопли: на WEED_FX.len с по кадру идёт рябь — кольцевая линза, как в ангаре Broken Bus, но мелкая и медленная,
+// а картинка чуть зеленеет и становится сочнее. Новый лист заводит отсчёт заново (не складывается).
+const WEED_FX = {
+  len: 24,           // с — сколько длится (Влад: «на 24 секунды»)
+  fadeIn: 1.5, fadeOut: 4,   // с — появление и угасание в конце
+  rings: 5,          // колец от центра до угла кадра
+  depth: 0.22,       // глубина — доля от предела складки (в Broken Bus в ангаре 0.9)
+  speed: 0.35,       // колец в секунду (наружу)
+  green: 1,          // сила зелени и сочности (1 — как задумано)
+  left: 0, phase: 0,
+};
+function updateWeedFx(dt) {
+  const F = WEED_FX, u = outMat.uniforms;
+  F.left = Math.max(0, F.left - dt);
+  const e0 = F.left <= 0 ? 0 : Math.min(1, (F.len - F.left) / F.fadeIn, F.left / F.fadeOut), e = e0 * e0 * (3 - 2 * e0);
+  const size = 0.5 * Math.hypot(FISH_ASPECT, 1) / F.rings;
+  F.phase = (F.phase + dt * F.speed * 2 * Math.PI) % (2 * Math.PI);
+  u.ripSize.value = size;
+  u.ripAmt.value = e * F.depth * 0.85 * size / (2 * Math.PI);   // 0.85 — предел складки, как RIPPLE_FOLD в Broken Bus
+  u.ripPhase.value = -F.phase;
+  u.green.value = e * F.green;
+}
 function updateBananas(dt, t) {
   const fx = -Math.sin(car.heading), fz = -Math.cos(car.heading);
   if (bananaPrev.x === null) { bananaPrev.x = car.x; bananaPrev.z = car.z; }
@@ -4498,6 +4535,7 @@ function updateBananas(dt, t) {
   const lo = Math.min(back, 0) - CAR.rear, hi = Math.max(back, 0) + CAR.front;
   bananaPrev.x = car.x; bananaPrev.z = car.z;
   bananaFlash = Math.max(0, bananaFlash - dt / 0.4); coconutFlash = Math.max(0, coconutFlash - dt / 0.4); leafFlash = Math.max(0, leafFlash - dt / 0.4);
+  updateWeedFx(dt);
   const N = bananaNear;
   if (Math.hypot(camPos.x - N.x, camPos.z - N.z) > 40) {
     N.x = camPos.x; N.z = camPos.z;
@@ -4520,7 +4558,7 @@ function updateBananas(dt, t) {
       const rx = b.x - car.x, rz = b.z - car.z, s = Math.max(lo, Math.min(hi, rx * fx + rz * fz));
       if (b.k > 0.5 && (rx - fx * s) ** 2 + (rz - fz * s) ** 2 < BANANA_REACH ** 2) {
         b.taken = true; b.wait = BANANA_RESPAWN;
-        if (b.leaf) { leafCount++; leafFlash = 1; } else if (b.coco) { coconutCount++; coconutFlash = 1; } else { bananaCount++; bananaFlash = 1; }
+        if (b.leaf) { leafCount++; leafFlash = 1; WEED_FX.left = WEED_FX.len; } else if (b.coco) { coconutCount++; coconutFlash = 1; } else { bananaCount++; bananaFlash = 1; }
         soundPickup(b.coco, b.leaf);
       }
     }

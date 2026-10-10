@@ -372,7 +372,7 @@ function buildPiers() {
       bx(gN, 0.4, 2, 16.8, lambert({ color: 0x193135 }), -96, gy + 6, 0);
     }
     // паромы Raja: один у северной аппарели, один на отстое
-    moor(gN, boatCarFerry({ L: 22, B: 7 }), 35 + 13 + 13, -1, 178);
+    // (паром у северной аппарели ходит на Панган по расписанию: ferry.js)
     moor(gS, boatCarFerry({ L: 22, B: 7 }), 33 + 26, 14, 150);
     pierGroups.push(gN, gS);
   }
@@ -399,7 +399,7 @@ function buildPiers() {
       k.position.set(H1 - 1, Y + 0.28, -v); g.add(k);
       bx(g, 0.5, 0.1, 0.5, M.kneht, H1 - 1, Y + 0.6, -v);
     }
-    moor(g, boatFastFerry({ L: 20, B: 4.6, name: 'SEATRAN' }), H1 - 2, -7.5, 115);           // Seatran Discovery
+    // (Seatran Discovery у головы ходит на Панган по расписанию: ferry.js)
     // B — тонкий стальной (аз. 323°): канатные перила, ржавые стойки
     const gb = pierGroup('bangrak_b');
     deck(gb, 1, 43, 1.1, 1.5, M.plank, 0.15, M.rustPile, 3.2, 0.08);
@@ -489,8 +489,8 @@ function buildPiers() {
     // рекламный щит на двух жердях на 2/3 длины
     for (const s of [-1, 1]) bx(g, 0.1, 4.6, 0.1, M.woodPile, 12 + s * 1.4, Y + 2.3, 1.6);
     bx(g, 3, 1, 0.08, lambert({ color: 0xe8e4d8 }), 12, Y + 3.9, 1.6);
-    moor(g, boatTourBoat(), L + 6, -3.5, 190);
-    moor(g, boatPatrol(), L + 2, 2.8, 175);              // полицейский катер
+    // (катер на Панган у левого борта — по расписанию: ferry.js)
+    moor(g, boatPatrol(), L + 2, -2.8, 175);             // полицейский катер (справа: слева причал катера на Панган)
     pierGroups.push(g);
   }
 
