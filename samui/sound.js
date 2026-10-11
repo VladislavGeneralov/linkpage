@@ -29,6 +29,9 @@ const SOUND = {
 const ENGINE_OF = { beetle: 'beetle', porsche: 'porsche911', lancia: 'lancia_fiat', wave: 'wave', dmax: 'dmax', city: 'city',
   evo: 'evo', impreza: 'impreza' };
 const ENGINE_TRIM_DB = { beetle: -1.8, porsche911: 3.8, lancia_fiat: 25.2, wave: 1, dmax: 2.5, city: 0.5, evo: 6.1, impreza: 2.5 };   // Evo: вдвое громче выравнивания и на 15 % тише (подбирал Влад на слух)   // у Жука +3.5 дБ сверх выравнивания: в 1.5 раза громче (просил Влад)          // выравнивание громкости записей (к −23 LUFS)
+// поправка только на холостых (к RPM_IDLE + 0.3 сходит на нет): City на стоянке звучала громче всех, а это одна из самых
+// тихих машин (Влад, 2026-10-11). −5 дБ — по замеру с K-взвешиванием она на холостых становится как Lancia (около −29)
+const ENGINE_IDLE_DB = { city: -5 };
 const ENGINE_BRIGHT_DB = { beetle: 9 };                                                // подъём верхов глухой записи
 const GEARS = [0.28, 0.5, 0.75, 1.0], RPM_IDLE = 0.12;     // верхние скорости передач в долях предельной; холостой ход
 const GRAIN = 0.1;                                         // с — длина гранулы; перекрытие в три слоя
@@ -312,7 +315,8 @@ function soundUpdate(dt) {
   // без газа: своя запись сброса — естественный тон; у кого её нет — разгон, притушенный фильтром
   const own = S.engine && S.engine.off;
   S.tone.frequency.setTargetAtTime(S.open || own ? 9000 : 1800, now, 0.08);
-  S.load.gain.setTargetAtTime(S.open ? 1 : own ? 0.8 : 0.55, now, 0.08);
+  const idleDb = (ENGINE_IDLE_DB[ENGINE_OF[CAR.id]] || 0) * clamp01(1 - (S.rpm - RPM_IDLE) / 0.3);
+  S.load.gain.setTargetAtTime((S.open ? 1 : own ? 0.8 : 0.55) * Math.pow(10, idleDb / 20), now, 0.08);
 
   // --- шины ---
   const depth = waterDepth(car.x, car.z), wet = depth > 0.1, gate = clamp01((sp - 3) / 7);        // тише 3 м/с — молчат
