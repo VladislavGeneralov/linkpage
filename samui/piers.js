@@ -518,7 +518,21 @@ function buildPiers() {
     const rnd = seededRandom(31);
     for (let i = 0; i < 9; i++) moor(g, boatLongtail(rnd), 18 + i * 13 + rnd() * 4, 2.7, 4 + rnd() * 9);
     for (let i = 0; i < 4; i++) {
-      const u = -3 - rnd() * 4, v = -22 - i * 7, b = moor(g, boatLongtail(rnd), u, v, 20 + rnd() * 25), w = toWorld(g, u, v);
+      // на песок между кольцевой и водой: раньше u = −3…−7 — это ровно на дороге 4170 (Влад: «почему лодки на дороге?»)
+      const u0 = -3 - rnd() * 4, v = -22 - i * 7;
+      let u = u0;
+      const clearOfRoads = (x, z) => {                                                     // ни одна дорога рядом (не только ближайшая)
+        const cx = Math.floor(x / ROAD_CELL), cz = Math.floor(z / ROAD_CELL);
+        for (let ax = cx - 1; ax <= cx + 1; ax++) for (let az = cz - 1; az <= cz + 1; az++) { const cell = roadCells.get(roadKey(ax, az)); if (!cell) continue;
+          for (let k = 0; k < cell.length; k += 2) { const R = roads[cell[k]], i = cell[k + 1];
+            for (const j of [i - 1, i]) { const a = R.fr[j], c = R.fr[j + 1]; if (!a || !c) continue;            // до отрезка оси, не до узла
+              const wx = c.p.x - a.p.x, wz = c.p.z - a.p.z, t = Math.max(0, Math.min(1, ((x - a.p.x) * wx + (z - a.p.z) * wz) / (wx * wx + wz * wz || 1)));
+              if (Math.hypot(a.p.x + wx * t - x, a.p.z + wz * t - z) < R.half + 10) return false; } } }   // 10 м — полдлины длиннохвостки с валом мотора (16 м) с запасом
+        return true;
+      };
+      for (let t = 2; t <= 26; t += 0.5) { const q = toWorld(g, t, v), gy = groundY(q.x, q.z);
+        if (clearOfRoads(q.x, q.z) && gy > -0.3 && gy < 0.8) { u = t; break; } }
+      const b = moor(g, boatLongtail(rnd), u, v, 20 + rnd() * 25), w = toWorld(g, u, v);
       b.position.y = groundY(w.x, w.z) + 0.2; b.rotation.z = (rnd() - 0.5) * 0.3;         // лежит на песке, завалившись на борт
     }
     moor(g, boatSpeedboat(), 60, -2.2, 4);

@@ -4529,30 +4529,42 @@ for (let i = 0; i < LEAF_TOTAL; i++) { const spot = bananaSpot(null, false, true
 const bananaPrev = { x: null, z: 0 };    // где была машина кадр назад (на большой скорости банан не проскочить)
 const bananaNear = { list: [], x: Infinity, z: 0 };   // плоды, которыми занят кадр: ближние, собранные (ждут или тают) и растущие; список обновляется, когда камера ушла на 40 м
 // Лист конопли: на WEED_FX.len с по кадру идёт рябь — кольцевая линза, как в ангаре Broken Bus, но мелкая и медленная,
-// а картинка чуть зеленеет и становится сочнее. Новый лист заводит отсчёт заново (не складывается).
+// картинка чуть зеленеет и становится сочнее, проступают разъезд каналов и шлейф.
+// У каждого листа своё действие (WEED_FX.list — возрасты, с). Сила кадра — по самому сильному из них, а пока действия
+// нескольких листов идут одновременно, всё сильнее: каждое наложенное — ещё ×1.12 (Влад: «на всё время, где 2 и более
+// эффектов наложились»). Наложенное входит и выходит по своей огибающей, поэтому прибавка появляется и уходит плавно.
 const WEED_FX = {
-  len: 29.5,         // с — сколько длится: 1.5 появление + 20 в полную силу + 8 угасание (Влад 2026-10-11; было 24)
+  len: 29.5,         // с — сколько длится действие листа: 1.5 появление + 20 в полную силу + 8 угасание (Влад 2026-10-11; было 24)
   fadeIn: 1.5, fadeOut: 8,   // с — появление и угасание в конце
   rings: 5,          // колец от центра до угла кадра
-  depth: 0.6,        // глубина — доля от предела складки (в Broken Bus в ангаре 0.9; было 0.22 — Влад: «увеличить интенсивность», потом «давай 0.6»)
+  depth: 0.48,       // глубина — доля от предела складки (в Broken Bus в ангаре 0.9; было 0.22 → 0.6 → 0.48 по словам Влада)
   speed: 0.35,       // колец в секунду (наружу)
   green: 1,          // сила зелени и сочности (1 — как задумано)
   chroma: 0.006,     // разъезд красного и синего: доля от расстояния до центра (у края кадра ~1 пиксель) — «едва заметно»
+  chromaIn: 4,       // с — разъезд каналов накатывает дольше остального (Влад: «не сразу, а за 4 сек»)
   trail: 0.3,        // шлейф: доля прошлого кадра в новом (0.3 — след тает за 3–4 кадра) — «едва заметно»
-  left: 0, phase: 0,
+  stack: 1.12,       // каждое наложенное действие — сильнее ещё на 12%
+  stackMax: 3,       // не сильнее ×3 от обычного; глубина ряби — не дальше 0.95 предела складки, шлейф — не больше 0.8
+  list: [], phase: 0,
 };
+function weedPickup() { WEED_FX.list.push(0); }
 function updateWeedFx(dt) {
-  const F = WEED_FX, u = outMat.uniforms;
-  F.left = Math.max(0, F.left - dt);
-  const e0 = F.left <= 0 ? 0 : Math.min(1, (F.len - F.left) / F.fadeIn, F.left / F.fadeOut), e = e0 * e0 * (3 - 2 * e0);
+  const F = WEED_FX, u = outMat.uniforms, sm = (x) => x * x * (3 - 2 * x);
+  for (let i = F.list.length - 1; i >= 0; i--) if ((F.list[i] += dt) >= F.len) F.list.splice(i, 1);
+  const lev = (a, rise) => Math.max(0, Math.min(1, a / rise, (F.len - a) / F.fadeOut));          // огибающая одного действия
+  const E = F.list.map(a => lev(a, F.fadeIn)).sort((x, y) => y - x), C = F.list.map(a => lev(a, F.chromaIn)).sort((x, y) => y - x);
+  const e = sm(E[0] || 0), c = sm(C[0] || 0);
+  let b = 1; for (let i = 1; i < E.length; i++) b *= 1 + (F.stack - 1) * sm(E[i]);                 // наложенные — прибавка по их силе
+  b = Math.min(F.stackMax, b);
   const size = 0.5 * Math.hypot(FISH_ASPECT, 1) / F.rings;
   F.phase = (F.phase + dt * F.speed * 2 * Math.PI) % (2 * Math.PI);
   u.ripSize.value = size;
-  u.ripAmt.value = e * F.depth * 0.85 * size / (2 * Math.PI);   // 0.85 — предел складки, как RIPPLE_FOLD в Broken Bus
+  u.ripAmt.value = e * Math.min(0.95, F.depth * b) * 0.85 * size / (2 * Math.PI);   // 0.85 — предел складки, как RIPPLE_FOLD в Broken Bus
   u.ripPhase.value = -F.phase;
-  u.green.value = e * F.green;
-  u.chroma.value = e * F.chroma;
-  TRAIL.keep = e * F.trail;
+  u.green.value = e * F.green * b;
+  u.chroma.value = c * F.chroma * b;
+  TRAIL.keep = e * Math.min(0.8, F.trail * b);
+  F.boost = b;
 }
 function updateBananas(dt, t) {
   const fx = -Math.sin(car.heading), fz = -Math.cos(car.heading);
@@ -4585,7 +4597,7 @@ function updateBananas(dt, t) {
       const rx = b.x - car.x, rz = b.z - car.z, s = Math.max(lo, Math.min(hi, rx * fx + rz * fz));
       if (b.k > 0.5 && (rx - fx * s) ** 2 + (rz - fz * s) ** 2 < BANANA_REACH ** 2) {
         b.taken = true; b.wait = BANANA_RESPAWN;
-        if (b.leaf) { leafCount++; leafFlash = 1; WEED_FX.left = WEED_FX.len; } else if (b.coco) { coconutCount++; coconutFlash = 1; } else { bananaCount++; bananaFlash = 1; }
+        if (b.leaf) { leafCount++; leafFlash = 1; weedPickup(); } else if (b.coco) { coconutCount++; coconutFlash = 1; } else { bananaCount++; bananaFlash = 1; }
         soundPickup(b.coco, b.leaf);
       }
     }
@@ -5242,6 +5254,13 @@ function updateCamera(dt, snap) {
   camPos.y = Math.max(car.y + up, groundY(camPos.x, camPos.z) + 1.2, 0.9);   // не под землёй (склон позади) и не под водой
   camSlope += (Math.sin(car.gPitch) - camSlope) * (snap ? 1 : 1 - Math.exp(-dt / 0.35));
   camLook.set(car.x + fx * ahead, car.y + lookY + camSlope * ahead * 0.8 * fr, car.z + fz * ahead);   // на подъёме взгляд идёт вверх по склону
+  // обзор вниз (джойстик или мышь с правой кнопкой) после четверти хода ещё и задирает взгляд: на упоре — почти отвесно в небо
+  // (Влад: «смотреть прямо вверх в небо»); 1.53 рад ≈ 88° — ровно 90° lookAt не умеет
+  { const k0 = Math.max(0, Math.min(1, (camLookUp - 0.25) / 0.75)), k = k0 * k0 * (3 - 2 * k0);
+    if (k > 0) {
+      const hx = camLook.x - camPos.x, hz = camLook.z - camPos.z, hd = Math.hypot(hx, hz) || 1, base = Math.atan2(camLook.y - camPos.y, hd), a = base + (1.53 - base) * k;
+      camLook.set(camPos.x + hx / hd * Math.cos(a) * 10, camPos.y + Math.sin(a) * 10, camPos.z + hz / hd * Math.cos(a) * 10);
+    } }
   camera.position.copy(camPos);
   if (camShake.t > 0) { const a = camShake.amp * camShake.t / 0.45; camera.position.x += (Math.random() - 0.5) * a; camera.position.y += (Math.random() - 0.5) * a; camera.position.z += (Math.random() - 0.5) * a; }
   camera.lookAt(camLook);
