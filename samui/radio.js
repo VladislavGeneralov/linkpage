@@ -20,7 +20,7 @@ const LIVE_N = 1024;                       // шагов в кольцевых �
 const LIVE_KICK_SHIFT = 0;                 // с — поправка времени бочки (подгоняется сверкой с track_data.js)
 
 const radio = {
-  mode: 'local', queue: [], idx: -1, gen: 0, volume: 1, wantPlay: false, status: '', listTitle: '',
+  mode: 'local', queue: [], idx: -1, gen: 0, volume: 1, wantPlay: false, status: '', listTitle: '', listNote: '',
   pending: false,                          // ссылка ещё превращается в поток: встроенный трек пока не включаем
   el: null, ctx: null, gain: null, anLow: null, anFull: null,
   resumeAt: 0, lastTime: 0, retries: 0, retryFrom: 0, fails: 0, dir: 1, menuOpen: false, drag: null,
@@ -77,12 +77,14 @@ async function radioLoad(url, remember = false, shuffle = false) {
     const direct = tracks.filter(radioProgressive);        // треки только с HLS пока пропускаем
     const playable = direct.filter(t => !radioPreview(t));  // и те, у которых без подписки есть только отрывок 0:30
     if (!playable.length) throw new Error(direct.length ? 'only 30 s previews here (SoundCloud Go+)' : 'no tracks with a direct stream');
-    radio.queue = playable; radio.listTitle = res.kind === 'playlist' ? (res.title || '') : '';
+    radio.queue = playable; radio.listTitle = res.kind === 'playlist' ? (res.title || '') : ''; radio.listNote = '';
     radio.fails = 0; radio.dir = 1;
     if (remember) store.set('tg_radio_url', url);
     await radioPlayIndex(shuffle ? Math.floor(Math.random() * playable.length) : 0);
-    if (tracks.length > direct.length) radioStatus(radio.status + ' (skipped, no direct stream: ' + (tracks.length - direct.length) + ')');
-    if (direct.length > playable.length) radioStatus(radio.status + ' (skipped, 30 s previews: ' + (direct.length - playable.length) + ')');
+    // сколько треков выкинуто из списка — строкой в шапке списка, не рядом с названием играющего трека
+    // (Влад: «почему в скобках skipped?» — выглядело так, будто пропущен сам этот трек)
+    radio.listNote = [tracks.length > direct.length ? (tracks.length - direct.length) + ' left out: no direct stream' : '',
+      direct.length > playable.length ? (direct.length - playable.length) + ' left out: only 30 s previews' : ''].filter(Boolean).join(', ');
   } catch (e) {
     if (gen !== radio.gen) return;
     if (radio.mode === 'stream' && radio.queue.length) {   // новая ссылка не загрузилась — прежний список остаётся
@@ -475,7 +477,8 @@ function radioMenuLayout() {
 }
 // строки списка: заголовок плейлиста и треки
 function radioMenuItems() {
-  const items = radio.listTitle ? [{ text: radio.listTitle }] : [];
+  const head = [radio.listTitle, radio.listNote && '(' + radio.listNote + ')'].filter(Boolean).join(' ');
+  const items = head ? [{ text: head }] : [];
   radio.queue.forEach((t, i) => {
     const secs = Math.floor(t.duration / 1000);
     items.push({ i, text: (t.user ? t.user.username + ' - ' : '') + (t.title || ''), dur: Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0') });
