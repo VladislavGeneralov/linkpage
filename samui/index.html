@@ -414,11 +414,11 @@ const outMat = new THREE.ShaderMaterial({
   uniforms: {
     tLow: { value: lowRT.texture }, k: { value: FISHEYE }, aspect: { value: FISH_ASPECT },
     res: { value: new THREE.Vector2(RES_W, RES_H) },
-    ripAmt: { value: 0 }, ripSize: { value: 1 }, ripPhase: { value: 0 }, green: { value: 0 },   // «травка»: рябь и зелень (WEED_FX)
+    ripAmt: { value: 0 }, ripSize: { value: 1 }, ripPhase: { value: 0 }, green: { value: 0 }, chroma: { value: 0 },   // «травка»: рябь, зелень, разъезд каналов (WEED_FX)
   },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
-    uniform sampler2D tLow; uniform float k, aspect, ripAmt, ripSize, ripPhase, green;
+    uniform sampler2D tLow; uniform float k, aspect, ripAmt, ripSize, ripPhase, green, chroma;
     uniform vec2 res; varying vec2 vUv;
     // кольцевая линза (как рябь в ангаре Broken Bus): точка выборки сдвигается по радиусу на ripAmt·sin(2πr/ripSize + фаза)
     vec2 ripple(vec2 uv) {
@@ -435,7 +435,12 @@ const outMat = new THREE.ShaderMaterial({
     }
     void main() {
       vec2 uvq = (floor(vUv * res) + 0.5) / res;                // пиксельная сетка мира
-      vec3 c = texture2D(tLow, fish(ripAmt > 0.0 ? ripple(uvq) : uvq)).rgb;
+      vec2 uvr = ripAmt > 0.0 ? ripple(uvq) : uvq;
+      vec3 c = texture2D(tLow, fish(uvr)).rgb;
+      if (chroma > 0.0) {                                       // красный чуть наружу, синий чуть внутрь — кайма к краям кадра
+        vec2 d = (uvr - 0.5) * chroma;
+        c.r = texture2D(tLow, fish(uvr + d)).r; c.b = texture2D(tLow, fish(uvr - d)).b;
+      }
       if (green > 0.0) {                                        // чуть зеленее и сочнее
         float l = dot(c, vec3(0.299, 0.587, 0.114));
         c = mix(vec3(l), c, 1.0 + 0.45 * green) * vec3(1.0 - 0.05 * green, 1.0 + 0.08 * green, 1.0 - 0.07 * green);
@@ -446,11 +451,29 @@ const outMat = new THREE.ShaderMaterial({
   depthTest: false, depthWrite: false,
 });
 outScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outMat));
+// Шлейф «травки»: пока идёт эффект, кадр мира смешивается с прошлым смешанным кадром (два буфера по очереди) —
+// за движущимся остаётся слабый след. Без эффекта лишнего прохода нет.
+const TRAIL = { rt: [0, 1].map(() => new THREE.WebGLRenderTarget(RES_W * 2, RES_H * 2,
+  { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false })), i: 0, fresh: true, keep: 0 };
+const trailScene = new THREE.Scene(), trailMat = new THREE.ShaderMaterial({
+  uniforms: { tCur: { value: lowRT.texture }, tPrev: { value: null }, keep: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `uniform sampler2D tCur, tPrev; uniform float keep; varying vec2 vUv;
+    void main() { gl_FragColor = vec4(mix(texture2D(tCur, vUv).rgb, texture2D(tPrev, vUv).rgb, keep), 1.0); }`,
+  depthTest: false, depthWrite: false,
+});
+trailScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), trailMat));
 function renderFrame() {
   renderer.setRenderTarget(lowRT);         // 1) мир в пиксельный кадр
   STILL.skipHidden = true;
   renderer.render(scene, camera);
   STILL.skipHidden = false;
+  if (TRAIL.keep > 0) {                    // 1б) шлейф: смешать с прошлым кадром
+    const T = TRAIL, cur = T.rt[T.i], prev = T.rt[1 - T.i];
+    trailMat.uniforms.tPrev.value = prev.texture; trailMat.uniforms.keep.value = T.fresh ? 0 : T.keep;
+    renderer.setRenderTarget(cur); renderer.render(trailScene, outCam);
+    outMat.uniforms.tLow.value = cur.texture; T.i = 1 - T.i; T.fresh = false;
+  } else { outMat.uniforms.tLow.value = lowRT.texture; TRAIL.fresh = true; }
   renderer.setRenderTarget(null);          // 2) итог на экран с фишаем
   renderer.render(outScene, outCam);
 }
@@ -4508,12 +4531,14 @@ const bananaNear = { list: [], x: Infinity, z: 0 };   // плоды, котор�
 // Лист конопли: на WEED_FX.len с по кадру идёт рябь — кольцевая линза, как в ангаре Broken Bus, но мелкая и медленная,
 // а картинка чуть зеленеет и становится сочнее. Новый лист заводит отсчёт заново (не складывается).
 const WEED_FX = {
-  len: 24,           // с — сколько длится (Влад: «на 24 секунды»)
-  fadeIn: 1.5, fadeOut: 4,   // с — появление и угасание в конце
+  len: 29.5,         // с — сколько длится: 1.5 появление + 20 в полную силу + 8 угасание (Влад 2026-10-11; было 24)
+  fadeIn: 1.5, fadeOut: 8,   // с — появление и угасание в конце
   rings: 5,          // колец от центра до угла кадра
-  depth: 0.22,       // глубина — доля от предела складки (в Broken Bus в ангаре 0.9)
+  depth: 0.6,        // глубина — доля от предела складки (в Broken Bus в ангаре 0.9; было 0.22 — Влад: «увеличить интенсивность», потом «давай 0.6»)
   speed: 0.35,       // колец в секунду (наружу)
   green: 1,          // сила зелени и сочности (1 — как задумано)
+  chroma: 0.006,     // разъезд красного и синего: доля от расстояния до центра (у края кадра ~1 пиксель) — «едва заметно»
+  trail: 0.3,        // шлейф: доля прошлого кадра в новом (0.3 — след тает за 3–4 кадра) — «едва заметно»
   left: 0, phase: 0,
 };
 function updateWeedFx(dt) {
@@ -4526,6 +4551,8 @@ function updateWeedFx(dt) {
   u.ripAmt.value = e * F.depth * 0.85 * size / (2 * Math.PI);   // 0.85 — предел складки, как RIPPLE_FOLD в Broken Bus
   u.ripPhase.value = -F.phase;
   u.green.value = e * F.green;
+  u.chroma.value = e * F.chroma;
+  TRAIL.keep = e * F.trail;
 }
 function updateBananas(dt, t) {
   const fx = -Math.sin(car.heading), fz = -Math.cos(car.heading);
