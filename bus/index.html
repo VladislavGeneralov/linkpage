@@ -146,11 +146,20 @@ const outMat = new THREE.ShaderMaterial({
     k: { value: FISHEYE }, aspect: { value: FISH_ASPECT }, res: { value: new THREE.Vector2(RES_W, RES_H) },
     hiTexel: { value: new THREE.Vector2(1, 1) }, glowAmount: { value: 0.6 },
     tLogo: { value: logoTex }, showLogo: { value: 0 }, logoWhite: { value: 0 }, logoAlpha: { value: 1 },
+    ripAmt: { value: 0 }, ripSize: { value: 1 }, ripPhase: { value: 0 }, green: { value: 0 }, chroma: { value: 0 },   // «травка»: рябь, зелень, разъезд каналов (WEED_FX)
   },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
   fragmentShader: `
     uniform sampler2D tLow, tHi, tLogo; uniform float useHi, k, aspect, glowAmount, showLogo, logoAlpha, logoWhite;
+    uniform float ripAmt, ripSize, ripPhase, green, chroma;
     uniform vec2 res, hiTexel; varying vec2 vUv;
+    // «травка» (из tropicalgame): кольцевая линза — точка выборки сдвигается по радиусу на ripAmt·sin(2πr/ripSize + фаза)
+    vec2 ripple(vec2 uv) {
+      vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
+      float r = length(p);
+      float sc = r > 0.0 ? (r + ripAmt * sin(6.2831853 * r / ripSize + ripPhase)) / r : 1.0;
+      return clamp(p * sc / vec2(aspect, 1.0) + 0.5, 0.0, 1.0);
+    }
     vec2 fish(vec2 uv) {
       vec2 p = (uv - 0.5) * vec2(aspect, 1.0);
       float r2 = dot(p, p) / (0.25 * (aspect * aspect + 1.0));   // 1 — в углу кадра
@@ -159,10 +168,15 @@ const outMat = new THREE.ShaderMaterial({
     }
     void main() {
       vec2 uvq = (floor(vUv * res) + 0.5) / res;                // пиксельная сетка мира
-      vec3 c = texture2D(tLow, fish(uvq)).rgb;
+      vec2 uvr = ripAmt > 0.0 ? ripple(uvq) : uvq;
+      vec3 c = texture2D(tLow, fish(uvr)).rgb;
+      if (chroma > 0.0) {                                       // красный чуть наружу, синий чуть внутрь — кайма к краям кадра
+        vec2 d = (uvr - 0.5) * chroma;
+        c.r = texture2D(tLow, fish(uvr + d)).r; c.b = texture2D(tLow, fish(uvr - d)).b;
+      }
       // чёткий слой очищен прозрачным чёрным, поэтому его цвет уже умножен на прозрачность
       if (useHi > 0.5) {
-        vec2 u = fish(vUv);
+        vec2 u = fish(ripAmt > 0.0 ? ripple(vUv) : vUv);
         vec4 h = texture2D(tHi, u);
         // свечение: средняя непрозрачность слоя на двух кольцах вокруг (3 и 6 px)
         vec3 g = vec3(0.0);                                        // свечение — цвета самой структуры
@@ -183,11 +197,28 @@ const outMat = new THREE.ShaderMaterial({
           if (L.a > 0.5) c = mix(c, logoWhite > 0.5 ? vec3(1.0) : L.rgb, logoAlpha);   // свои цвета; в Y/U — белый
         }
       }
+      if (green > 0.0) {                                        // «травка»: чуть зеленее и сочнее
+        float l = dot(c, vec3(0.299, 0.587, 0.114));
+        c = mix(vec3(l), c, 1.0 + 0.45 * green) * vec3(1.0 - 0.05 * green, 1.0 + 0.08 * green, 1.0 - 0.07 * green);
+        c = clamp(c, 0.0, 1.0);
+      }
       gl_FragColor = vec4(c, 1.0);
     }`,
   depthTest: false, depthWrite: false,
 });
 outScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), outMat));
+// Шлейф «травки» (из tropicalgame): пока идёт эффект, кадр мира смешивается с прошлым смешанным кадром (два буфера
+// по очереди) — за движущимся остаётся слабый след. Без эффекта лишнего прохода нет.
+const TRAIL = { rt: [0, 1].map(() => new THREE.WebGLRenderTarget(RES_W * 2, RES_H * 2,
+  { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false })), i: 0, fresh: true, keep: 0 };
+const trailScene = new THREE.Scene(), trailMat = new THREE.ShaderMaterial({
+  uniforms: { tCur: { value: lowRT.texture }, tPrev: { value: null }, keep: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `uniform sampler2D tCur, tPrev; uniform float keep; varying vec2 vUv;
+    void main() { gl_FragColor = vec4(mix(texture2D(tCur, vUv).rgb, texture2D(tPrev, vUv).rgb, keep), 1.0); }`,
+  depthTest: false, depthWrite: false,
+});
+trailScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), trailMat));
 
 // ---------- Режим U: Y + ложные цвета по плотности ----------
 // Готовый кадр Y рисуется в compRT, затем шейдер перекрашивает нереальное (жилы, лианы, ток) как научный
@@ -364,6 +395,15 @@ function renderFrame() {
     scene.background = bg;
     renderer.autoClear = true;
   }
+  // 1б) «травка»: шлейф — смешать кадр мира с прошлым
+  if (TRAIL.keep > 0) {
+    const T = TRAIL;
+    for (const rt of T.rt) if (rt.width !== lw || rt.height !== lh) { rt.setSize(lw, lh); T.fresh = true; }
+    const cur = T.rt[T.i], prev = T.rt[1 - T.i];
+    trailMat.uniforms.tPrev.value = prev.texture; trailMat.uniforms.keep.value = T.fresh ? 0 : T.keep;
+    renderer.setRenderTarget(cur); renderer.render(trailScene, outCam);
+    outMat.uniforms.tLow.value = cur.texture; T.i = 1 - T.i; T.fresh = false;
+  } else { outMat.uniforms.tLow.value = lowRT.texture; TRAIL.fresh = true; }
   // 2) чёткий стиль: глубина мира в полном разрешении (без цвета), затем слой 1 поверх
   if (hiOn) {
     renderer.setRenderTarget(hiRT);
@@ -3532,6 +3572,7 @@ function update(dt) {
   placeVehicle(dt);
   if (headGlow.visible) updateBeams();
   updateSkids(skid);
+  updateWeed(dt, clockNow());              // «травка» на дороге и её действие
   updatePassenger(dt, clockNow());
   for (const f of airportAnim) f(clockNow());
 }
@@ -4079,9 +4120,11 @@ function drawHud() {
       hudGlyphs(t, 0, 0, 'rgba(255,255,255,0.8)', true, c.getContext('2d'));
       drawHud.wifi = c;
     }
-    const c = drawHud.wifi, K = 2;
+    const c = drawHud.wifi, K = 2, x = Math.round((RES_W - c.width * K) / 2), y = 16;
+    g.fillStyle = 'rgba(0,0,0,0.5)';                                     // подложка — чтобы читалось на любом фоне
+    g.fillRect(x - 6, y - 4, c.width * K + 10, c.height * K + 6);
     g.imageSmoothingEnabled = false;
-    g.drawImage(c, Math.round((RES_W - c.width * K) / 2), 16, c.width * K, c.height * K);
+    g.drawImage(c, x, y, c.width * K, c.height * K);
     return;
   }
   if (!PHONE) drawMap(), drawCompass();   // на телефоне мини-карты нет (просил Влад) — скорость в углу
@@ -4092,6 +4135,136 @@ function drawHud() {
     hudGlyphs(t, Math.round((RES_W - hudWidth(t)) / 2), Math.round(RES_H * 0.3), HUD_WHITE);
   }
 }
+
+// ---------- «Травка» на дороге (из tropicalgame) ----------
+// Изредка (раз в WEED.every с езды) впереди на дороге вырастает светящийся лист конопли — как собираемые листья в
+// tropicalgame: семь узких пальцев веером, стоит стоймя и вертится, светится зелёным, под ним пятно света. В 85 % случаев
+// он ложится прямо на полосу машины (она его «съедает»), иначе — на другой край дороги. Наехал — лист взлетает и тает,
+// и начинается эффект: рябь-линза по кадру, картинка зеленеет и становится сочнее, разъезд каналов, лёгкий шлейф.
+// Счётчика нет. Сила эффекта — на 13 % ниже, чем в tropicalgame; у каждого листа рябь своя (кольца, скорость, глубина).
+// Нет у наблюдателей вечеринки (их кадр — по присланному состоянию) и в рендере дубля.
+const WEED = { every: [50, 120], ahead: [70, 110], onLane: 0.85, reach: 1.6, life: 40 };
+const weedLeafGeo = (() => {
+  const pos = [], col = [], dark = new THREE.Color('#2f8a2a'), lit = new THREE.Color('#7fdc4a'), stem = new THREE.Color('#a8d86a');
+  const tri = (a, b, c, ca, cb, cc) => { pos.push(a[0], a[1], 0, b[0], b[1], 0, c[0], c[1], 0); for (const q of [ca, cb, cc]) col.push(q.r, q.g, q.b); };
+  const O = [0, 0.2];                                                 // откуда расходятся пальцы
+  for (let k = -3; k <= 3; k++) {
+    const a = Math.PI / 2 + k * 0.5, len = 0.56 * (1 - Math.abs(k) * 0.16), w = 0.05 + 0.012 * (3 - Math.abs(k));
+    const dx = Math.cos(a), dy = Math.sin(a), M = [O[0] + dx * len * 0.42, O[1] + dy * len * 0.42], T = [O[0] + dx * len, O[1] + dy * len];
+    const L = [M[0] - dy * w, M[1] + dx * w], R = [M[0] + dy * w, M[1] - dx * w];
+    tri(O, L, M, lit, dark, lit); tri(O, M, R, lit, lit, dark); tri(L, T, M, dark, lit, lit); tri(M, T, R, lit, lit, dark);   // палец: светлая жилка, тёмные края
+  }
+  tri([-0.018, 0.2], [0.018, 0.2], [0.012, -0.08], stem, stem, stem); tri([-0.018, 0.2], [0.012, -0.08], [-0.012, -0.08], stem, stem, stem);   // черешок
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeVertexNormals();
+  return geo;
+})();
+const weedGlowTex = pixelTexture(32, 32, (g) => {
+  const gr = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  gr.addColorStop(0, 'rgba(255,236,120,0.85)'); gr.addColorStop(0.4, 'rgba(255,208,60,0.38)'); gr.addColorStop(1, 'rgba(255,170,30,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 32, 32);
+});
+const WEED_GLOW = { map: weedGlowTex, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false, color: 0x6aff5a };
+const weedLeaf = (() => {
+  const g = new THREE.Group();
+  const leaf = new THREE.Mesh(weedLeafGeo, lambert({ vertexColors: true, emissive: 0x1f6a16, side: THREE.DoubleSide }));
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial(WEED_GLOW)); halo.scale.set(1.6, 1.6, 1);
+  const pool = new THREE.Mesh(new THREE.CircleGeometry(1.25, 16).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial(WEED_GLOW));
+  for (const o of [halo, pool]) o.userData.xrSkip = true;              // в Y/U свечение не перекрашивается
+  g.add(leaf, halo, pool);
+  g.visible = false; scene.add(g);
+  return { g, leaf, halo, pool, on: false, k: 0, taken: false, x: 0, z: 0, age: 0, wait: 0 };
+})();
+// ближайший кадр любой дороги к точке: [дорога, номер кадра] или null (дальше ROAD_CELL м)
+function nearestRoadFrame(x, z) {
+  const cx = Math.floor(x / ROAD_CELL), cz = Math.floor(z / ROAD_CELL);
+  let best = Infinity, br = -1, bi = -1;
+  for (let ax = cx - 1; ax <= cx + 1; ax++) for (let az = cz - 1; az <= cz + 1; az++) {
+    const cell = roadCells.get(roadKey(ax, az)); if (!cell) continue;
+    for (let k = 0; k < cell.length; k += 2) { const p = roads[cell[k]].fr[cell[k + 1]].p, d = (p.x - x) ** 2 + (p.z - z) ** 2; if (d < best) { best = d; br = cell[k]; bi = cell[k + 1]; } }
+  }
+  return br < 0 || best > (halfS + 1) ** 2 ? null : [roads[br], bi];
+}
+// вырастить лист впереди по дороге, на которой машина (не на дороге — не растёт, попробуем позже)
+function weedSpawn() {
+  const hit = nearestRoadFrame(car.x, car.z);
+  if (!hit) return false;
+  const [R, i] = hit, fr = R.fr, n = fr.length - 1, f = fr[i];
+  const fx = -Math.sin(car.course), fz = -Math.cos(car.course);
+  const nx = fr[Math.min(n, i + 1)].p.x - fr[Math.max(0, i - 1)].p.x, nz = fr[Math.min(n, i + 1)].p.z - fr[Math.max(0, i - 1)].p.z;
+  const dir = nx * fx + nz * fz >= 0 ? 1 : -1;                         // куда по кадрам — туда, куда едем
+  const lane = (car.x - f.p.x) * f.side.x + (car.z - f.p.z) * f.side.z;   // где машина поперёк дороги
+  const step = R.len / n, j0 = i + dir * Math.round((WEED.ahead[0] + Math.random() * (WEED.ahead[1] - WEED.ahead[0])) / step);
+  const j = R.ring ? ((j0 % n) + n) % n : j0;
+  if (j < 0 || j > n) return false;                                     // дорога кончается раньше
+  const off = Math.random() < WEED.onLane ? Math.max(-halfR + 0.8, Math.min(halfR - 0.8, lane))   // на полосе машины
+    : (lane > 0 ? -1 : 1) * (halfR - 0.8);                                                     // или на другом краю дороги
+  const p = fr[j];
+  Object.assign(weedLeaf, { on: true, taken: false, k: 0, age: 0, x: p.p.x + p.side.x * off, z: p.p.z + p.side.z * off });
+  weedLeaf.g.position.set(weedLeaf.x, surfaceY(weedLeaf.x, weedLeaf.z), weedLeaf.z);
+  weedLeaf.g.visible = true;
+  if (worldXray) xrayWalk(weedLeaf.g, true);
+  return true;
+}
+// Действие листа: WEED_FX.list — возрасты действий, с (листья могут наложиться — тогда всё сильнее, как в tropicalgame)
+const WEED_FX = {
+  len: 29.5, fadeIn: 1.5, fadeOut: 8,   // с — действие: 1.5 появление + 20 в полную силу + 8 угасание
+  power: 0.87,                          // сила — на 13 % ниже, чем в tropicalgame (просил Влад)
+  rings: 5, depth: 0.44, speed: 0.35,   // рябь (у каждого листа своя — см. weedPickup)
+  chroma: 0.006, chromaIn: 4, trail: 0.3, stack: 1.12, stackMax: 3,
+  list: [], phase: 0,
+};
+function weedPickup() {
+  const r = (a, b) => a + Math.random() * (b - a);
+  Object.assign(WEED_FX, { rings: Math.round(r(4, 6.4)), depth: 0.44 * r(0.85, 1.15), speed: 0.35 * r(0.75, 1.3) * (Math.random() < 0.2 ? -1 : 1) });   // рябь каждого листа чуть другая (иногда бежит к центру)
+  WEED_FX.list.push(0);
+}
+function updateWeedFx(dt) {
+  const F = WEED_FX, u = outMat.uniforms, sm = (x) => x * x * (3 - 2 * x);
+  for (let i = F.list.length - 1; i >= 0; i--) if ((F.list[i] += dt) >= F.len) F.list.splice(i, 1);
+  const lev = (a, rise) => Math.max(0, Math.min(1, a / rise, (F.len - a) / F.fadeOut));          // огибающая одного действия
+  const E = F.list.map(a => lev(a, F.fadeIn)).sort((x, y) => y - x), C = F.list.map(a => lev(a, F.chromaIn)).sort((x, y) => y - x);
+  const e = sm(E[0] || 0), c = sm(C[0] || 0);
+  let b = 1; for (let i = 1; i < E.length; i++) b *= 1 + (F.stack - 1) * sm(E[i]);                 // наложенные — прибавка по их силе
+  b = Math.min(F.stackMax, b) * F.power;
+  const size = 0.5 * Math.hypot(FISH_ASPECT, 1) / F.rings;
+  F.phase = (F.phase + dt * F.speed * 2 * Math.PI) % (2 * Math.PI);
+  u.ripSize.value = size;
+  u.ripAmt.value = e * Math.min(0.95, F.depth * b) * 0.85 * size / (2 * Math.PI);   // 0.85 — предел складки
+  u.ripPhase.value = -F.phase;
+  u.green.value = e * b;
+  u.chroma.value = c * F.chroma * b;
+  TRAIL.keep = e * Math.min(0.8, F.trail * b);
+}
+function updateWeed(dt, t) {
+  updateWeedFx(dt);
+  if (RENDER || WATCH) return;
+  const W = weedLeaf;
+  if (!W.on) {                                                          // ждём следующего листа — время идёт только в езде
+    if (Math.abs(car.speed) > 3) W.wait -= dt;
+    if (W.wait <= 0) { if (!weedSpawn()) W.wait = 2; else W.wait = WEED.every[0] + Math.random() * (WEED.every[1] - WEED.every[0]); }
+    return;
+  }
+  W.age += dt;
+  const rx = W.x - car.x, rz = W.z - car.z, fx = -Math.sin(car.heading), fz = -Math.cos(car.heading);
+  if (W.taken) W.k -= dt / 0.25;                                        // съеденный взлетает, крутится и тает
+  else {
+    W.k = Math.min(1, W.k + dt / 0.5);
+    const along = rx * fx + rz * fz, s = Math.max(-(CAR.rear || BUS_L / 2), Math.min(CAR.front || BUS_L / 2, along));
+    if (W.k > 0.5 && (rx - fx * s) ** 2 + (rz - fz * s) ** 2 < WEED.reach ** 2) { W.taken = true; weedPickup(); }
+    else if (W.age > WEED.life || (along < -40 && Math.hypot(rx, rz) > 40)) W.taken = true, W.k = Math.min(W.k, 0.3);   // проехал мимо или не доехал — тает без действия
+  }
+  if (W.taken && W.k <= 0) { W.on = false; W.g.visible = false; return; }
+  const k = Math.max(0, W.k);
+  W.leaf.position.y = 0.3 + 0.1 + 0.04 * Math.sin(t * 2) + (W.taken ? (1 - k) * 1.2 : 0);
+  W.leaf.rotation.y = t * (W.taken ? 14 : 1.6);
+  W.leaf.scale.setScalar(k);
+  W.halo.position.y = W.leaf.position.y + 0.12; W.halo.material.opacity = k;
+  W.pool.position.y = 0.07; W.pool.material.opacity = 0.8 * k;
+}
+weedLeaf.wait = WEED.every[0] * 0.5 + Math.random() * 20;             // первый лист — пораньше
 
 // ---------- Вечеринка: window.busParty (для Broken Bus/bus_party) ----------
 // Стабильный интерфейс для сервера вечеринки, чтобы он не лазил во внутренности игры:
