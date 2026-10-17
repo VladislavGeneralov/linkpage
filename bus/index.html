@@ -4113,14 +4113,14 @@ function drawHud() {
   const g = hud2d;
   g.clearRect(0, 0, RES_W, RES_H);
   if (PHANTOM) {                           // фантом: без мини-карты, скорости и выбора машины; вверху — как подключиться к сети вечеринки
-    // адрес игры — вдвое крупнее обычного шрифта приборов (точки ×2, без сглаживания), чуть ниже верхнего края
+    // адрес игры — втрое крупнее обычного шрифта приборов (точки ×3, без сглаживания), чуть ниже верхнего края
     if (!drawHud.wifi) {
       const t = hudText(PARTY_WIFI), c = document.createElement('canvas');
       c.width = hudWidth(t) + 2; c.height = 7;
       hudGlyphs(t, 0, 0, 'rgba(255,255,255,0.8)', true, c.getContext('2d'));
       drawHud.wifi = c;
     }
-    const c = drawHud.wifi, K = 2, x = Math.round((RES_W - c.width * K) / 2), y = 16;
+    const c = drawHud.wifi, K = 3, x = Math.round((RES_W - c.width * K) / 2), y = 16;
     g.fillStyle = 'rgba(0,0,0,0.5)';                                     // подложка — чтобы читалось на любом фоне
     g.fillRect(x - 6, y - 4, c.width * K + 10, c.height * K + 6);
     g.imageSmoothingEnabled = false;
