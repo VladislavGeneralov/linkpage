@@ -805,7 +805,9 @@ const ECL = 23.44 * Math.PI / 180;       // наклон эклиптики
 const SUN_LON = 54.5;                    // ° — место солнца на эклиптике (15 мая, склонение +18,9°)
 const TIME_SHIFT = 19.5;                 // ч — сдвиг общих часов (у всех один и тот же); потом его будет задавать сервер
 let dayTime = 0;                         // ч, 0..24 — местное солнечное время (в 12 солнце выше всего)
-const worldDayTime = () => RENDER && clock.day !== undefined ? clock.day : ((Date.now() / 1000 / DAY_LEN * 24 + TIME_SHIFT) % 24 + 24) % 24;
+const worldDayTime = () => RENDER && clock.day !== undefined ? clock.day
+  : PHONE ? (PHONE_SUNSET + (Date.now() - PAGE_T0) / 1000 / DAY_LEN * 24) % 24   // телефон — от заката при входе
+  : ((Date.now() / 1000 / DAY_LEN * 24 + TIME_SHIFT) % 24 + 24) % 24;
 // точка эклиптики (долгота, °) -> экваториальные координаты [прямое восхождение, склонение], рад
 const eclToEq = (lon) => { const l = lon * Math.PI / 180; return [Math.atan2(Math.cos(ECL) * Math.sin(l), Math.cos(l)), Math.asin(Math.sin(ECL) * Math.sin(l))]; };
 const eqVec = (ra, dec) => new THREE.Vector3(Math.cos(dec) * Math.cos(ra), Math.cos(dec) * Math.sin(ra), Math.sin(dec));
@@ -820,6 +822,14 @@ function setSkyRot(lst) {
                   -s,       c,  0, 0,
                    0,       0,  0, 1);
 }
+// Телефон: при входе — закат (вечернее солнце в 5° над горизонтом), дальше время идёт своим ходом от этой точки;
+// общие часы остаются у экранов на компе (фантом, наблюдатели)
+const PHONE_SUNSET = (() => {
+  const v = new THREE.Vector3();
+  for (let h = 12; h < 24; h += 0.01) { setSkyRot(SUN_EQ[0] + (h - 12) * Math.PI / 12); v.copy(SUN_E).applyMatrix4(skyRot); if (Math.asin(v.y) * 180 / Math.PI < 5) return h; }
+  return 19;
+})();
+const PAGE_T0 = Date.now();
 
 // Палитры неба — по высоте солнца (alt, °). sky / shadow / lit — градиенты от зенита (0) к горизонту (1): само небо,
 // тени облаков, освещённые края облаков. Закат — прежний закат Broken Bus; остальные — из tropicalgame.
@@ -4074,8 +4084,8 @@ function drawHud() {
     g.drawImage(c, Math.round((RES_W - c.width * K) / 2), 16, c.width * K, c.height * K);
     return;
   }
-  drawMap(); drawCompass();
-  hudGlyphs(hudText(Math.round(Math.abs(car.speed) * 3.6) + ' KM/H'), MAP.x + MAP.N + 6, RES_H - 11, HUD_WHITE);   // скорость — справа от карты
+  if (!PHONE) drawMap(), drawCompass();   // на телефоне мини-карты нет (просил Влад) — скорость в углу
+  hudGlyphs(hudText(Math.round(Math.abs(car.speed) * 3.6) + ' KM/H'), PHONE ? 6 : MAP.x + MAP.N + 6, RES_H - 11, HUD_WHITE);   // скорость — справа от карты
   if (!take.on && !WATCH) drawCarPick();
   if (HUD_NOTE.text && performance.now() < HUD_NOTE.until) {
     const t = hudText(HUD_NOTE.text);
