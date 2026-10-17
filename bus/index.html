@@ -4143,7 +4143,8 @@ function drawHud() {
 // и начинается эффект: рябь-линза по кадру, картинка зеленеет и становится сочнее, разъезд каналов, лёгкий шлейф.
 // Счётчика нет. Сила эффекта — на 13 % ниже, чем в tropicalgame; у каждого листа рябь своя (кольца, скорость, глубина).
 // Нет у наблюдателей вечеринки (их кадр — по присланному состоянию) и в рендере дубля.
-const WEED = { every: [20, 45], ahead: [70, 110], onLane: 0.85, reach: 1.6, life: 40 };
+// (Влад: «почаще и чтобы съедала почаще»: раз в 10–25 с, 95 % — на полосе, ловится шире, вблизи сам подтягивается к машине)
+const WEED = { every: [10, 25], ahead: [70, 110], onLane: 0.95, reach: 2.6, pull: 18, life: 40 };
 const weedLeafGeo = (() => {
   const pos = [], col = [], dark = new THREE.Color('#2f8a2a'), lit = new THREE.Color('#7fdc4a'), stem = new THREE.Color('#a8d86a');
   const tri = (a, b, c, ca, cb, cc) => { pos.push(a[0], a[1], 0, b[0], b[1], 0, c[0], c[1], 0); for (const q of [ca, cb, cc]) col.push(q.r, q.g, q.b); };
@@ -4253,7 +4254,10 @@ function updateWeed(dt, t) {
   else {
     W.k = Math.min(1, W.k + dt / 0.5);
     const along = rx * fx + rz * fz, s = Math.max(-(CAR.rear || BUS_L / 2), Math.min(CAR.front || BUS_L / 2, along));
-    if (W.k > 0.5 && (rx - fx * s) ** 2 + (rz - fz * s) ** 2 < WEED.reach ** 2) { W.taken = true; weedPickup(); }
+    // вблизи лист сам подтягивается поперёк к пути машины (на 3 м/с) — в заносе она реже промахивается
+    const lx = rx - fx * s, lz = rz - fz * s, ld = Math.hypot(lx, lz);
+    if (along > 0 && along < WEED.pull && ld > 0.3) { const m = Math.min(ld - 0.3, 3 * dt) / ld; W.x -= lx * m; W.z -= lz * m; W.g.position.set(W.x, surfaceY(W.x, W.z), W.z); }
+    if (W.k > 0.5 && lx * lx + lz * lz < WEED.reach ** 2) { W.taken = true; weedPickup(); }
     else if (W.age > WEED.life || (along < -40 && Math.hypot(rx, rz) > 40)) W.taken = true, W.k = Math.min(W.k, 0.3);   // проехал мимо или не доехал — тает без действия
   }
   if (W.taken && W.k <= 0) { W.on = false; W.g.visible = false; return; }
