@@ -62,18 +62,30 @@ let btChar = null, btStatus = "не подключён", btQueue = Promise.resol
 
 btButton.onclick = async () => {
   if (!navigator.bluetooth) { btStatus = "браузер без Web Bluetooth (нужен Chrome / Edge / Bluefy)"; return; }
+  let stage = "выбор устройства";
   try {
     const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [BT_SERVICE] }] });
     device.addEventListener("gattserverdisconnected", () => { btChar = null; btStatus = "отключён"; btButton.textContent = "bluetooth"; });
-    btStatus = "подключение…";
+    stage = "подключение"; btStatus = "подключение…";
     const server = await device.gatt.connect();
-    btChar = await (await server.getPrimaryService(BT_SERVICE)).getCharacteristic(BT_COUNT);
+    stage = "поиск сервиса";
+    const service = await server.getPrimaryService(BT_SERVICE);
+    stage = "поиск характеристики";
+    btChar = await service.getCharacteristic(BT_COUNT);
     btStatus = `подключён: ${device.name || "Fingers"}`;
     btButton.textContent = "bt ✓";
   } catch (e) {
-    btStatus = `ошибка: ${e.message}`;
+    console.error(stage, e);
+    btStatus = `ошибка (${stage}): ${errText(e)}`;
   }
 };
+
+// Браузеры (особенно на iOS) иногда бросают не Error, а строку или объект без message
+function errText(e) {
+  if (e == null) return String(e);
+  if (typeof e === "string") return e;
+  return [e.name, e.message].filter(Boolean).join(": ") || JSON.stringify(e) || String(e);
+}
 
 // Записи по одной: параллельная запись в GATT падает с ошибкой
 function sendCount(n) {
@@ -83,7 +95,7 @@ function sendCount(n) {
       ? btChar.writeValueWithoutResponse(Uint8Array.of(n))
       : btChar.writeValue(Uint8Array.of(n))))
     .then(() => { btStatus = btStatus.replace(/ · отправлено: \d$/, "") + ` · отправлено: ${n}`; })
-    .catch(e => { btStatus = `ошибка отправки: ${e.message}`; });
+    .catch(e => { console.error("отправка", e); btStatus = `ошибка отправки: ${errText(e)}`; });
 }
 
 const vision = await FilesetResolver.forVisionTasks(
