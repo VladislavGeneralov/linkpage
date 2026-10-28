@@ -51,9 +51,9 @@
   <div id="loader"><div class="spinner"></div><div id="status">загрузка модели…</div></div>
 
   <div id="conn">
-    <div class="role" data-role="thumb"><span class="dot"></span><span class="label">большой · Fingers-1</span></div>
-    <div class="role" data-role="index"><span class="dot"></span><span class="label">указат. · Fingers-2</span></div>
-    <div class="role" data-role="middle"><span class="dot"></span><span class="label">средний · Fingers-3</span></div>
+    <div class="role" data-role="thumb"><span class="dot"></span><span class="label">большой · F1</span></div>
+    <div class="role" data-role="index"><span class="dot"></span><span class="label">указат. · F2</span></div>
+    <div class="role" data-role="middle"><span class="dot"></span><span class="label">средний · F3</span></div>
     <button id="connAll">подключить все 3</button>
   </div>
 
@@ -102,8 +102,8 @@ const conn = {}; // role -> { char, queue }
 for (const role of ROLES) conn[role] = { char: null, queue: Promise.resolve() };
 
 // Модули пронумерованы физически и зашиты в прошивке под постоянными BLE-именами:
-// Fingers-1 = большой, Fingers-2 = указательный, Fingers-3 = средний.
-const ROLE_DEVICE = { thumb: "Fingers-1", index: "Fingers-2", middle: "Fingers-3" };
+// F1 = большой, F2 = указательный, F3 = средний.
+const ROLE_DEVICE = { thumb: "F1", index: "F2", middle: "F3" };
 
 function roleEl(role) { return document.querySelector(`.role[data-role="${role}"]`); }
 
