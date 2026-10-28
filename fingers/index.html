@@ -99,6 +99,8 @@ const BEND_DEAD_MS = 700; // мёртвое время: гасит дребез�
 const BT_SERVICE = "6e5f0001-7b3a-4c2d-9e1f-a0b1c2d3e4f5";
 const BT_COUNT   = "6e5f0002-7b3a-4c2d-9e1f-a0b1c2d3e4f5";
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 const conn = {}; // role -> { char, queue }
 for (const role of ROLES) conn[role] = { char: null, device: null, queue: Promise.resolve() };
 
@@ -124,36 +126,49 @@ async function bindDevice(role, device) {
     setRoleStatus(role, `❌ ${device.name || "устройство"} уже подключён как «${ROLE_LABEL[dup]}»`, true);
     return false;
   }
-  let stage = "подключение";
-  try {
-    if (!device.gattserverdisconnectedBound) {
-      device.gattserverdisconnectedBound = true;
-      device.addEventListener("gattserverdisconnected", () => {
-        conn[role].char = null;
-        el.classList.remove("ok");
-        setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (отключён, ищу…)`);
-        updateStartEnabled();
-        watchForDevice(role, device);               // сам переподключится, когда модуль снова рядом
-      });
-    }
-    const server = await device.gatt.connect();
-    stage = "поиск сервиса";
-    const service = await server.getPrimaryService(BT_SERVICE);
-    stage = "поиск характеристики";
-    conn[role].char = await service.getCharacteristic(BT_COUNT);
-    conn[role].device = device;
-    el.classList.remove("bad");
-    el.classList.add("ok");
-    setRoleStatus(role, `✓ ${ROLE_LABEL[role]} · ${device.name}`);
-    updateStartEnabled();
-    return true;
-  } catch (e) {
-    console.error(role, stage, e);
-    setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (не в радиусе)`);
-    updateStartEnabled();
-    watchForDevice(role, device);
-    return false;
+  if (!device.gattserverdisconnectedBound) {
+    device.gattserverdisconnectedBound = true;
+    device.addEventListener("gattserverdisconnected", () => {
+      conn[role].char = null;
+      el.classList.remove("ok");
+      setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (отключён, ищу…)`);
+      updateStartEnabled();
+      watchForDevice(role, device);               // сам переподключится, когда модуль снова рядом
+    });
   }
+
+  // Поиск сервиса/характеристики сразу после GATT-подключения на Windows иногда отваливается
+  // с «Unreachable» (видели это на модуле 3 вживую — помогал обычный повтор). Пробуем до 3 раз,
+  // не дёргая весь gatt.connect() заново — только то, что реально упало.
+  let stage = "подключение";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const server = await device.gatt.connect();
+      stage = "поиск сервиса";
+      const service = await server.getPrimaryService(BT_SERVICE);
+      stage = "поиск характеристики";
+      conn[role].char = await service.getCharacteristic(BT_COUNT);
+      conn[role].device = device;
+      el.classList.remove("bad");
+      el.classList.add("ok");
+      setRoleStatus(role, `✓ ${ROLE_LABEL[role]} · ${device.name}`);
+      updateStartEnabled();
+      return true;
+    } catch (e) {
+      console.error(role, stage, `попытка ${attempt}`, e);
+      if (attempt < 3) {
+        setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (повтор ${attempt}/3…)`);
+        // Половинчатое соединение мешает устройству переподключиться само — сбрасываем перед повтором
+        try { device.gatt.disconnect(); } catch {}
+        await sleep(1500);
+      }
+    }
+  }
+  setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (не подключился, жду появления)`, true);
+  try { device.gatt.disconnect(); } catch {}
+  updateStartEnabled();
+  watchForDevice(role, device);
+  return false;
 }
 
 // Ждём, пока устройство снова появится в эфире (ушло из радиуса / было выключено), и подключаемся
@@ -240,8 +255,6 @@ function buzz(role) {
     .catch(e => console.error("отправка", role, e));
   return c.queue;
 }
-
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ---------------- Игра: старт → секвенция играется на моторах → повтор в камеру → результат ----------------
 const STEP_GAP = 650;      // мс между вибро-импульсами при воспроизведении секвенции
