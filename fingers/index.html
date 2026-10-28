@@ -9,14 +9,38 @@
   #wrap { position: relative; width: 100vw; height: 100vh; }
   video { display: none; }
   canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-  #info { position: absolute; top: 8px; left: 8px; white-space: pre; background: rgba(0,0,0,.6); padding: 6px 8px; }
-  #zero { position: absolute; right: 8px; bottom: 8px; font: 16px monospace; padding: 12px 18px; }
-  #bt { position: absolute; left: 8px; bottom: 8px; font: 16px monospace; padding: 12px 18px; }
+  #info { position: absolute; top: 8px; left: 8px; white-space: pre; background: rgba(0,0,0,.6); padding: 6px 8px; font-size: 11px; }
+  #zero { position: absolute; right: 8px; bottom: 8px; font: 14px monospace; padding: 10px 14px; }
   #loader { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
   #loader.hidden { display: none; }
   .spinner { width: 48px; height: 48px; border: 4px solid rgba(255,255,255,.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.9s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  @media (max-width: 600px) { #info { font-size: 10px; } }
+
+  /* Панель подключения трёх модулей */
+  #conn { position: absolute; top: 8px; right: 8px; display: flex; flex-direction: column; gap: 6px; background: rgba(0,0,0,.6); padding: 8px; border-radius: 8px; }
+  .role { display: flex; align-items: center; gap: 8px; font: 13px monospace; }
+  .role .dot { width: 10px; height: 10px; border-radius: 50%; background: #666; flex: none; }
+  .role.ok .dot { background: #3c3; }
+  .role .label { width: 86px; }
+  .role button { font: 12px monospace; padding: 5px 9px; }
+
+  /* Центральная панель: старт / ход игры / результат */
+  #panel { position: absolute; left: 50%; bottom: 10%; transform: translateX(-50%); text-align: center; }
+  #panel button { font: 18px monospace; padding: 14px 28px; border-radius: 10px; border: none; background: #fff; color: #000; }
+  #panel button:disabled { opacity: .35; }
+  #progress { font: 20px monospace; background: rgba(0,0,0,.6); padding: 10px 18px; border-radius: 8px; letter-spacing: 2px; }
+  #result { background: rgba(0,0,0,.75); padding: 14px 20px; border-radius: 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  #result .row { display: flex; gap: 10px; font-size: 22px; }
+  #result .cell { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: #333; }
+  #result .cell.hit { background: #2a2; }
+  #result .cell.miss { background: #a22; }
+  #result .verdict { font-size: 16px; }
+  .hint { font-size: 12px; opacity: .7; margin-top: 4px; }
+
+  @media (max-width: 600px) {
+    #info { font-size: 9px; }
+    .role .label { width: 70px; }
+  }
 </style>
 </head>
 <body>
@@ -25,8 +49,16 @@
   <canvas id="canvas"></canvas>
   <div id="info"></div>
   <div id="loader"><div class="spinner"></div><div id="status">загрузка модели…</div></div>
+
+  <div id="conn">
+    <div class="role" data-role="thumb"><span class="dot"></span><span class="label">большой · Fingers-1</span></div>
+    <div class="role" data-role="index"><span class="dot"></span><span class="label">указат. · Fingers-2</span></div>
+    <div class="role" data-role="middle"><span class="dot"></span><span class="label">средний · Fingers-3</span></div>
+    <button id="connAll">подключить все 3</button>
+  </div>
+
+  <div id="panel"></div>
   <button id="zero">ноль</button>
-  <button id="bt">bluetooth</button>
 </div>
 
 <script type="module">
@@ -38,66 +70,180 @@ const ctx = canvas.getContext("2d");
 const info = document.getElementById("info");
 const loader = document.getElementById("loader");
 const status = document.getElementById("status");
+const panel = document.getElementById("panel");
 
 // Индексы точек MediaPipe: 0 = запястье, дальше по 4 на палец (основание → кончик)
 const FINGERS = [
-  { name: "большой",   ids: [1, 2, 3, 4] },
-  { name: "указат.",   ids: [5, 6, 7, 8] },
-  { name: "средний",   ids: [9, 10, 11, 12] },
-  { name: "безымян.",  ids: [13, 14, 15, 16] },
-  { name: "мизинец",   ids: [17, 18, 19, 20] },
+  { name: "большой",   role: "thumb",  ids: [1, 2, 3, 4] },
+  { name: "указат.",   role: "index",  ids: [5, 6, 7, 8] },
+  { name: "средний",   role: "middle", ids: [9, 10, 11, 12] },
+  { name: "безымян.",  role: null,     ids: [13, 14, 15, 16] },
+  { name: "мизинец",   role: null,     ids: [17, 18, 19, 20] },
 ];
 const PALM = [[0, 1], [0, 5], [5, 9], [9, 13], [13, 17], [0, 17]];
+const ROLES = ["thumb", "index", "middle"];        // участвуют только эти три пальца
+const ROLE_LABEL = { thumb: "большой", index: "указательный", middle: "средний" };
 
 const THRESHOLD = 10; // градусов от начального положения — с этого палец начинает краснеть
 const FULL_BEND = 150; // градусов от начального положения — полный красный
-const BEND_ON = 40;    // загиб засчитывается (и уходит вибрация) с этого угла
+const BEND_ON = 40;    // загиб засчитывается с этого угла
 const BEND_OFF = 20;   // палец снова прямой ниже этого — гистерезис, чтобы не дребезжало
 
-// Bluetooth: модуль Fingers (XIAO nRF54L15) — пишем номер пальца 1–5, модуль вибрирует столько раз
+// ---------------- Bluetooth: три независимых модуля, по одному на палец ----------------
+// Каждый модуль (XIAO nRF54L15, прошивка fingers_ble_N) понимает одну команду: записать
+// число 1–5 в характеристику — столько коротких импульсов вибрации. Нам нужен один импульс,
+// поэтому всегда пишем 1; какой физический модуль надет на какой палец, выбирает человек
+// в диалоге выбора Bluetooth-устройства при подключении.
 const BT_SERVICE = "6e5f0001-7b3a-4c2d-9e1f-a0b1c2d3e4f5";
 const BT_COUNT   = "6e5f0002-7b3a-4c2d-9e1f-a0b1c2d3e4f5";
-const btButton = document.getElementById("bt");
-let btChar = null, btStatus = "не подключён", btQueue = Promise.resolve();
 
-btButton.onclick = async () => {
-  if (!navigator.bluetooth) { btStatus = "браузер без Web Bluetooth (нужен Chrome / Edge / Bluefy)"; return; }
+const conn = {}; // role -> { char, queue }
+for (const role of ROLES) conn[role] = { char: null, queue: Promise.resolve() };
+
+// Модули пронумерованы физически и зашиты в прошивке под постоянными BLE-именами:
+// Fingers-1 = большой, Fingers-2 = указательный, Fingers-3 = средний.
+const ROLE_DEVICE = { thumb: "Fingers-1", index: "Fingers-2", middle: "Fingers-3" };
+
+function roleEl(role) { return document.querySelector(`.role[data-role="${role}"]`); }
+
+async function connectRole(role) {
+  const el = roleEl(role);
   let stage = "выбор устройства";
   try {
-    const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [BT_SERVICE] }] });
-    device.addEventListener("gattserverdisconnected", () => { btChar = null; btStatus = "отключён"; btButton.textContent = "bluetooth"; });
-    stage = "подключение"; btStatus = "подключение…";
+    const device = await navigator.bluetooth.requestDevice({ filters: [{ name: ROLE_DEVICE[role] }] });
+    device.addEventListener("gattserverdisconnected", () => {
+      conn[role].char = null;
+      el.classList.remove("ok");
+      updateStartEnabled();
+    });
+    stage = "подключение";
     const server = await device.gatt.connect();
     stage = "поиск сервиса";
     const service = await server.getPrimaryService(BT_SERVICE);
     stage = "поиск характеристики";
-    btChar = await service.getCharacteristic(BT_COUNT);
-    btStatus = `подключён: ${device.name || "Fingers"}`;
-    btButton.textContent = "bt ✓";
+    conn[role].char = await service.getCharacteristic(BT_COUNT);
+    el.classList.add("ok");
   } catch (e) {
-    console.error(stage, e);
-    btStatus = `ошибка (${stage}): ${errText(e)}`;
+    console.error(role, stage, e);
+    el.title = `ошибка (${stage}): ${e.message || e}`;
   }
+  updateStartEnabled();
+}
+
+const connAllBtn = document.getElementById("connAll");
+connAllBtn.onclick = async () => {
+  connAllBtn.disabled = true;
+  connAllBtn.textContent = "подключение…";
+  for (const role of ROLES) await connectRole(role);   // по очереди: три диалога выбора устройства подряд
+  connAllBtn.textContent = allConnected() ? "подключено ✓" : "повторить";
+  connAllBtn.disabled = allConnected();
 };
 
-// Браузеры (особенно на iOS) иногда бросают не Error, а строку или объект без message
-function errText(e) {
-  if (e == null) return String(e);
-  if (typeof e === "string") return e;
-  return [e.name, e.message].filter(Boolean).join(": ") || JSON.stringify(e) || String(e);
+function allConnected() { return ROLES.every(r => conn[r].char); }
+
+// Один импульс на конкретном пальце. Записи по одной: параллельная запись в GATT падает с ошибкой.
+function buzz(role) {
+  const c = conn[role];
+  if (!c.char) return Promise.resolve();
+  c.queue = c.queue
+    .then(() => c.char && (c.char.writeValueWithoutResponse
+      ? c.char.writeValueWithoutResponse(Uint8Array.of(1))
+      : c.char.writeValue(Uint8Array.of(1))))
+    .catch(e => console.error("отправка", role, e));
+  return c.queue;
 }
 
-// Записи по одной: параллельная запись в GATT падает с ошибкой
-function sendCount(n) {
-  if (!btChar) return;
-  btQueue = btQueue
-    .then(() => btChar && (btChar.writeValueWithoutResponse
-      ? btChar.writeValueWithoutResponse(Uint8Array.of(n))
-      : btChar.writeValue(Uint8Array.of(n))))
-    .then(() => { btStatus = btStatus.replace(/ · отправлено: \d$/, "") + ` · отправлено: ${n}`; })
-    .catch(e => { console.error("отправка", e); btStatus = `ошибка отправки: ${errText(e)}`; });
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// ---------------- Игра: старт → секвенция играется на моторах → повтор в камеру → результат ----------------
+const STEP_GAP = 650;      // мс между вибро-импульсами при воспроизведении секвенции
+const SEQ_MIN = 3, SEQ_MAX = 5;
+
+let gameState = "idle";   // idle | playing | recording | result
+let sequence = [];        // секвенция для этого раунда, напр. ["thumb","index","thumb","middle"]
+let attempt = [];         // что реально распознано в камере
+
+function randomSequence() {
+  const len = SEQ_MIN + Math.floor(Math.random() * (SEQ_MAX - SEQ_MIN + 1));
+  const seq = [];
+  let prev = null;
+  for (let i = 0; i < len; i++) {
+    let r;
+    do { r = ROLES[Math.floor(Math.random() * ROLES.length)]; } while (r === prev); // без повтора подряд
+    seq.push(r);
+    prev = r;
+  }
+  return seq;
 }
 
+async function playSequence(seq) {
+  for (const role of seq) {
+    await buzz(role);
+    await sleep(STEP_GAP);
+  }
+}
+
+function updateStartEnabled() {
+  if (gameState === "idle") renderPanel();
+}
+
+async function startRound() {
+  sequence = randomSequence();
+  attempt = [];
+  gameState = "playing";
+  renderPanel();
+  await playSequence(sequence);
+  gameState = "recording";
+  renderPanel();
+}
+
+function onFingerBend(role) {
+  if (gameState !== "recording") return;
+  attempt.push(role);
+  if (attempt.length >= sequence.length) {
+    gameState = "result";
+  }
+  renderPanel();
+}
+
+function renderPanel() {
+  if (gameState === "idle") {
+    panel.innerHTML = "";
+    const btn = document.createElement("button");
+    btn.textContent = "старт";
+    btn.disabled = !allConnected();
+    btn.onclick = startRound;
+    panel.appendChild(btn);
+    if (!allConnected()) {
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.textContent = "подключите все 3 модуля справа";
+      panel.appendChild(hint);
+    }
+  } else if (gameState === "playing") {
+    panel.innerHTML = `<div id="progress">запоминайте…</div>`;
+  } else if (gameState === "recording") {
+    panel.innerHTML = `<div id="progress">повторите · шаг ${attempt.length + 1} из ${sequence.length}</div>`;
+  } else if (gameState === "result") {
+    const rows = sequence.map((want, i) => {
+      const got = attempt[i];
+      const hit = got === want;
+      return `<div class="cell ${hit ? "hit" : "miss"}">${ROLE_LABEL[want][0].toUpperCase()}</div>`;
+    }).join("");
+    const correct = sequence.filter((w, i) => attempt[i] === w).length;
+    const verdict = correct === sequence.length ? "точно повторено ✓" : `совпало ${correct} из ${sequence.length}`;
+    panel.innerHTML = `
+      <div id="result">
+        <div class="row">${rows}</div>
+        <div class="verdict">${verdict}</div>
+        <button id="again">ещё раз</button>
+      </div>`;
+    document.getElementById("again").onclick = () => { gameState = "idle"; renderPanel(); };
+  }
+}
+renderPanel();
+
+// ---------------- Камера и трекинг руки ----------------
 const vision = await FilesetResolver.forVisionTasks(
   "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
 );
@@ -171,7 +317,7 @@ function loop() {
     const px = p => [(1 - p.x) * W, p.y * H];
     const line = (a, b) => { ctx.beginPath(); ctx.moveTo(...px(a)); ctx.lineTo(...px(b)); ctx.stroke(); };
 
-    let text = `fps ${fps.toFixed(0)}  рук: ${res.landmarks.length}\nbt: ${btStatus}\n`;
+    let text = `fps ${fps.toFixed(0)}  рук: ${res.landmarks.length}  режим: ${gameState}\n`;
 
     res.landmarks.forEach((lm, h) => {
       const side = res.handedness[h][0].categoryName === "Left" ? "правая" : "левая";
@@ -182,11 +328,15 @@ function loop() {
       if (!baseline[side]) baseline[side] = smooth[side].slice();
       const deltas = smooth[side].map((v, i) => v - baseline[side][i]);
 
-      // Момент загиба (прямой → согнутый): отправить номер пальца, большой = 1 … мизинец = 5
+      // Момент загиба (прямой → согнутый): во время записи — шаг попытки; участвуют только 3 пальца
       bent[side] ??= [false, false, false, false, false];
       deltas.forEach((d, i) => {
-        if (!bent[side][i] && d >= BEND_ON) { bent[side][i] = true; sendCount(i + 1); }
-        else if (bent[side][i] && d < BEND_OFF) bent[side][i] = false;
+        if (!bent[side][i] && d >= BEND_ON) {
+          bent[side][i] = true;
+          if (FINGERS[i].role) onFingerBend(FINGERS[i].role);
+        } else if (bent[side][i] && d < BEND_OFF) {
+          bent[side][i] = false;
+        }
       });
 
       ctx.lineCap = "round";
