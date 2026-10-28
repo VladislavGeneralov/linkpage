@@ -100,7 +100,7 @@
   <div id="info" class="glass" hidden></div>
   <div id="tools">
     <button id="zero" class="ghost glass" title="Расслабьте руку, выпрямите пальцы и нажмите — загибы считаются от этого положения">калибровка</button>
-    <button id="dbg" class="ghost glass" title="Показать углы суставов">углы</button>
+    <button id="anglesBtn" class="ghost glass" title="Показать углы суставов">углы</button>
   </div>
 </div>
 
@@ -570,7 +570,7 @@ zeroBtn.onclick = () => {
   zeroBtn.classList.add("flash");
   setTimeout(() => { zeroBtn.textContent = "калибровка"; zeroBtn.classList.remove("flash"); }, 1200);
 };
-document.getElementById("dbg").onclick = () => { info.hidden = !info.hidden; };
+document.getElementById("anglesBtn").onclick = () => { info.hidden = !info.hidden; };
 
 // «Рука не видна» — только после короткой паузы, чтобы не мигало на единичных потерянных кадрах
 const handHint = document.getElementById("handHint");
