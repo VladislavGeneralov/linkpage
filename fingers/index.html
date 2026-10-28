@@ -105,7 +105,7 @@
 </div>
 
 <script type="module">
-import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+import { FilesetResolver, HandLandmarker } from "./mp/vision_bundle.mjs";   // @mediapipe/tasks-vision 0.10.14
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
@@ -473,29 +473,63 @@ updateConnBtn();
 autoConnectGranted().catch(e => console.error("автоподключение", e));
 
 // Если модель или камера не поднялись — показать причину, а не крутить лоадер вечно
-addEventListener("unhandledrejection", e => {
-  if (!loader.classList.contains("hidden")) status.textContent = `ошибка: ${e.reason?.message || e.reason}`;
-});
+// (ошибка top-level await в модуле приходит как "error", а не как "unhandledrejection")
+const showLoadError = err => {
+  if (!loader.classList.contains("hidden")) status.textContent = `ошибка: ${err?.message || err}`;
+};
+addEventListener("unhandledrejection", e => showLoadError(e.reason));
+addEventListener("error", e => showLoadError(e.error || e.message));
 
 // ---------------- Камера и трекинг руки ----------------
-const vision = await FilesetResolver.forVisionTasks(
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-);
-const MODEL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+// Движок и модель лежат рядом со страницей (mp/), а не на чужих CDN: те из России отвечают
+// то мгновенно, то минутами. Камеру запрашиваем сразу, параллельно с загрузкой модели.
+const camera = navigator.mediaDevices.getUserMedia({
+  video: { width: 1280, height: 720, facingMode: "user" },
+  audio: false,
+});
+camera.catch(() => {});                                // ошибку покажем ниже, когда дойдём до await
+
+// Модель качаем сами — так виден прогресс, и при откате GPU → CPU она не скачивается второй раз
+async function fetchWithProgress(url, label) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
+  const total = +res.headers.get("content-length") || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    got += value.length;
+    status.textContent = total ? `${label} · ${Math.round(got / total * 100)}%` : `${label} · ${(got / 1e6).toFixed(1)} МБ`;
+  }
+  const buf = new Uint8Array(got);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.length; }
+  return buf;
+}
+
+status.textContent = "загрузка движка…";
+const [vision, model] = await Promise.all([
+  FilesetResolver.forVisionTasks(new URL("mp/wasm", location.href).href),
+  fetchWithProgress("mp/hand_landmarker.task", "загрузка модели"),
+]);
+status.textContent = "запуск модели…";
 const make = delegate => HandLandmarker.createFromOptions(vision, {
-  baseOptions: { modelAssetPath: MODEL, delegate },
+  baseOptions: { modelAssetBuffer: model, delegate },
   runningMode: "VIDEO",
   numHands: 2,
 });
 // На некоторых телефонах (iOS Safari) GPU-делегат не стартует — падаем на CPU
 let landmarker;
-try { landmarker = await make("GPU"); } catch { landmarker = await make("CPU"); }
+try { landmarker = await make("GPU"); } catch {
+  status.textContent = "запуск модели (без видеокарты)…";
+  landmarker = await make("CPU");
+}
 
-status.textContent = "запрос камеры…";
-video.srcObject = await navigator.mediaDevices.getUserMedia({
-  video: { width: 1280, height: 720, facingMode: "user" },
-  audio: false,
-});
+status.textContent = "жду разрешения на камеру…";
+video.srcObject = await camera;
 await video.play();
 canvas.width = video.videoWidth;
 canvas.height = video.videoHeight;
