@@ -230,7 +230,12 @@ connAllBtn.onclick = async () => {
   for (const role of ROLES) {
     if (conn[role].char) continue;
     connAllBtn.textContent = `выбери ${ROLE_DEVICE[role]}…`;
-    await connectRole(role);
+    const ok = await connectRole(role);
+    // Один клик = одно разрешение браузера показать диалог выбора устройства. Если эта попытка
+    // не удалась (отменил, не нашёл), у СЛЕДУЮЩЕГО requestDevice() в этом же клике разрешения уже
+    // нет — браузер откажет с «Must be handling a user gesture» для всех оставшихся ролей подряд.
+    // Поэтому останавливаемся сразу, а не долбим дальше: следующий клик даст новое разрешение.
+    if (!ok) break;
   }
   if (allConnected()) {
     connAllBtn.textContent = "подключено ✓";
