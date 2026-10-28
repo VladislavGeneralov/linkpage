@@ -88,6 +88,7 @@ const THRESHOLD = 10; // градусов от начального положе
 const FULL_BEND = 150; // градусов от начального положения — полный красный
 const BEND_ON = 40;    // загиб засчитывается с этого угла
 const BEND_OFF = 20;   // палец снова прямой ниже этого — гистерезис, чтобы не дребезжало
+const BEND_DEAD_MS = 700; // мёртвое время: гасит дребезг камеры, не мешает настоящему повтору того же пальца
 
 // ---------------- Bluetooth: три независимых модуля, по одному на палец ----------------
 // Каждый модуль (XIAO nRF54L15, прошивка fingers_ble_N) понимает одну команду: записать
@@ -164,15 +165,11 @@ let sequence = [];        // секвенция для этого раунда, 
 let attempt = [];         // что реально распознано в камере
 
 function randomSequence() {
+  // Повтор одного пальца подряд допустим по заданию — отличать такие шаги
+  // помогает BEND_DEAD_MS (не форма секвенции).
   const len = SEQ_MIN + Math.floor(Math.random() * (SEQ_MAX - SEQ_MIN + 1));
   const seq = [];
-  let prev = null;
-  for (let i = 0; i < len; i++) {
-    let r;
-    do { r = ROLES[Math.floor(Math.random() * ROLES.length)]; } while (r === prev); // без повтора подряд
-    seq.push(r);
-    prev = r;
-  }
+  for (let i = 0; i < len; i++) seq.push(ROLES[Math.floor(Math.random() * ROLES.length)]);
   return seq;
 }
 
@@ -294,6 +291,7 @@ function bendColor(delta) {
 const baseline = {}; // side -> [5 углов]
 const smooth = {};   // side -> [5 углов], сглаживание дрожания
 const bent = {};     // side -> [5 bool], состояние загиба с гистерезисом
+const lastBendAt = {}; // side -> [5 timestamp], для мёртвого времени BEND_DEAD_MS
 document.getElementById("zero").onclick = () => {
   for (const side in smooth) baseline[side] = smooth[side].slice();
 };
@@ -330,10 +328,15 @@ function loop() {
 
       // Момент загиба (прямой → согнутый): во время записи — шаг попытки; участвуют только 3 пальца
       bent[side] ??= [false, false, false, false, false];
+      lastBendAt[side] ??= [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity];
       deltas.forEach((d, i) => {
         if (!bent[side][i] && d >= BEND_ON) {
           bent[side][i] = true;
-          if (FINGERS[i].role) onFingerBend(FINGERS[i].role);
+          // мёртвое время именно для этого пальца: дрожание камеры даёт короткие ложные повторы
+          if (now - lastBendAt[side][i] >= BEND_DEAD_MS) {
+            lastBendAt[side][i] = now;
+            if (FINGERS[i].role) onFingerBend(FINGERS[i].role);
+          }
         } else if (bent[side][i] && d < BEND_OFF) {
           bent[side][i] = false;
         }
