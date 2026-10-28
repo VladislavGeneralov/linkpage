@@ -21,6 +21,7 @@
   .role { display: flex; align-items: center; gap: 8px; font: 13px monospace; }
   .role .dot { width: 10px; height: 10px; border-radius: 50%; background: #666; flex: none; }
   .role.ok .dot { background: #3c3; }
+  .role.bad .label { color: #f55; }
   .role .label { width: 86px; }
   .role button { font: 12px monospace; padding: 5px 9px; }
 
@@ -99,7 +100,7 @@ const BT_SERVICE = "6e5f0001-7b3a-4c2d-9e1f-a0b1c2d3e4f5";
 const BT_COUNT   = "6e5f0002-7b3a-4c2d-9e1f-a0b1c2d3e4f5";
 
 const conn = {}; // role -> { char, queue }
-for (const role of ROLES) conn[role] = { char: null, queue: Promise.resolve() };
+for (const role of ROLES) conn[role] = { char: null, device: null, queue: Promise.resolve() };
 
 // Модули пронумерованы физически и зашиты в прошивке под постоянными BLE-именами:
 // F1 = большой, F2 = указательный, F3 = средний.
@@ -107,47 +108,126 @@ const ROLE_DEVICE = { thumb: "F1", index: "F2", middle: "F3" };
 
 function roleEl(role) { return document.querySelector(`.role[data-role="${role}"]`); }
 
-async function connectRole(role) {
+function labelEl(role) { return roleEl(role).querySelector(".label"); }
+function setRoleStatus(role, text, bad) {
   const el = roleEl(role);
-  let stage = "выбор устройства";
+  labelEl(role).textContent = text;
+  el.classList.toggle("bad", !!bad);
+}
+
+// Привязывает роль к уже выбранному устройству: GATT-подключение, поиск сервиса/характеристики,
+// статус на экране. Общий код для первого ручного выбора и для тихого автоподключения.
+async function bindDevice(role, device) {
+  const el = roleEl(role);
+  const dup = ROLES.find(r => r !== role && conn[r].device && conn[r].device.id === device.id);
+  if (dup) {
+    setRoleStatus(role, `❌ ${device.name || "устройство"} уже подключён как «${ROLE_LABEL[dup]}»`, true);
+    return false;
+  }
+  let stage = "подключение";
   try {
-    // Фильтр по сервису, не по имени: имя — точное совпадение всей строки, а сервис надёжнее
-    // ловится в рекламном пакете. В диалоге выбери устройство с нужным именем (см. подсказку).
-    const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [BT_SERVICE] }] });
-    if (device.name && device.name !== ROLE_DEVICE[role]) {
-      el.title = `выбрано ${device.name}, а не ${ROLE_DEVICE[role]} — подключил не тот модуль?`;
+    if (!device.gattserverdisconnectedBound) {
+      device.gattserverdisconnectedBound = true;
+      device.addEventListener("gattserverdisconnected", () => {
+        conn[role].char = null;
+        el.classList.remove("ok");
+        setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (отключён, ищу…)`);
+        updateStartEnabled();
+        watchForDevice(role, device);               // сам переподключится, когда модуль снова рядом
+      });
     }
-    device.addEventListener("gattserverdisconnected", () => {
-      conn[role].char = null;
-      el.classList.remove("ok");
-      updateStartEnabled();
-    });
-    stage = "подключение";
     const server = await device.gatt.connect();
     stage = "поиск сервиса";
     const service = await server.getPrimaryService(BT_SERVICE);
     stage = "поиск характеристики";
     conn[role].char = await service.getCharacteristic(BT_COUNT);
+    conn[role].device = device;
+    el.classList.remove("bad");
     el.classList.add("ok");
+    setRoleStatus(role, `✓ ${ROLE_LABEL[role]} · ${device.name}`);
+    updateStartEnabled();
+    return true;
   } catch (e) {
     console.error(role, stage, e);
-    el.title = `ошибка (${stage}): ${e.message || e}`;
+    setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (не в радиусе)`);
+    updateStartEnabled();
+    watchForDevice(role, device);
+    return false;
   }
-  updateStartEnabled();
 }
 
+// Ждём, пока устройство снова появится в эфире (ушло из радиуса / было выключено), и подключаемся
+// сами, без диалога — разрешение на доступ уже получено один раз раньше.
+const watching = {}; // role -> true, чтобы не плодить несколько слушателей на одно устройство
+async function watchForDevice(role, device) {
+  if (watching[role] || !device.watchAdvertisements) return;  // Bluefy и Safari это не умеют — молча пропускаем
+  watching[role] = true;
+  const onAdv = async () => {
+    if (conn[role].char) return;                      // уже подключились другим путём
+    device.removeEventListener("advertisementreceived", onAdv);
+    watching[role] = false;
+    await bindDevice(role, device);
+  };
+  device.addEventListener("advertisementreceived", onAdv);
+  try { await device.watchAdvertisements(); }
+  catch (e) { console.error("слежение", role, e); watching[role] = false; }
+}
+
+// Диалог выбора нужен только один раз: дальше браузер помнит разрешённые устройства
+// (navigator.bluetooth.getDevices), и страница подключается к ним сама при каждой загрузке.
+async function autoConnectGranted() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;   // Safari/старый браузер — только ручная кнопка
+  const granted = await navigator.bluetooth.getDevices();
+  for (const role of ROLES) {
+    if (conn[role].char) continue;
+    const device = granted.find(d => d.name === ROLE_DEVICE[role]);
+    if (!device) continue;                              // этот модуль ещё ни разу не подключали вручную
+    setRoleStatus(role, `${ROLE_LABEL[role]} · ${ROLE_DEVICE[role]} (подключаюсь…)`);
+    bindDevice(role, device);
+  }
+}
+
+function allConnected() { return ROLES.every(r => conn[r].char); }
+
+// Для ролей, которых нет среди уже разрешённых устройств (первый раз на этом браузере),
+// нужен один обычный диалог выбора — дальше за них отвечает autoConnectGranted/watchForDevice.
+async function connectRole(role) {
+  try {
+    const device = await navigator.bluetooth.requestDevice({ filters: [{ name: ROLE_DEVICE[role] }] });
+    return await bindDevice(role, device);
+  } catch (e) {
+    console.error(role, "выбор устройства", e);
+    setRoleStatus(role, `❌ ошибка выбора: ${e.message || e}`, true);
+    updateStartEnabled();
+    return false;
+  }
+}
+
+// Диалог не считается завершённым, пока не подключены все 3: уже подключённые роли на повторном
+// клике не переспрашиваются, а кнопка явно показывает, чего не хватает.
 const connAllBtn = document.getElementById("connAll");
 connAllBtn.onclick = async () => {
+  if (!navigator.bluetooth) {
+    connAllBtn.textContent = "нет Web Bluetooth (нужен Chrome / Edge / Bluefy)";
+    return;
+  }
   connAllBtn.disabled = true;
-  for (const role of ROLES) {                          // по очереди: три диалога выбора устройства подряд
+  for (const role of ROLES) {
+    if (conn[role].char) continue;
     connAllBtn.textContent = `выбери ${ROLE_DEVICE[role]}…`;
     await connectRole(role);
   }
-  connAllBtn.textContent = allConnected() ? "подключено ✓" : "повторить";
-  connAllBtn.disabled = allConnected();
+  if (allConnected()) {
+    connAllBtn.textContent = "подключено ✓";
+    connAllBtn.disabled = true;
+  } else {
+    const missing = ROLES.filter(r => !conn[r].char).map(r => ROLE_DEVICE[r]).join(", ");
+    connAllBtn.textContent = `не хватает: ${missing} — нажми ещё раз`;
+    connAllBtn.disabled = false;
+  }
 };
 
-function allConnected() { return ROLES.every(r => conn[r].char); }
+autoConnectGranted();
 
 // Один импульс на конкретном пальце. Записи по одной: параллельная запись в GATT падает с ошибкой.
 function buzz(role) {
