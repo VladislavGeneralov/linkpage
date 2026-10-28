@@ -111,7 +111,12 @@ async function connectRole(role) {
   const el = roleEl(role);
   let stage = "выбор устройства";
   try {
-    const device = await navigator.bluetooth.requestDevice({ filters: [{ name: ROLE_DEVICE[role] }] });
+    // Фильтр по сервису, не по имени: имя — точное совпадение всей строки, а сервис надёжнее
+    // ловится в рекламном пакете. В диалоге выбери устройство с нужным именем (см. подсказку).
+    const device = await navigator.bluetooth.requestDevice({ filters: [{ services: [BT_SERVICE] }] });
+    if (device.name && device.name !== ROLE_DEVICE[role]) {
+      el.title = `выбрано ${device.name}, а не ${ROLE_DEVICE[role]} — подключил не тот модуль?`;
+    }
     device.addEventListener("gattserverdisconnected", () => {
       conn[role].char = null;
       el.classList.remove("ok");
@@ -134,8 +139,10 @@ async function connectRole(role) {
 const connAllBtn = document.getElementById("connAll");
 connAllBtn.onclick = async () => {
   connAllBtn.disabled = true;
-  connAllBtn.textContent = "подключение…";
-  for (const role of ROLES) await connectRole(role);   // по очереди: три диалога выбора устройства подряд
+  for (const role of ROLES) {                          // по очереди: три диалога выбора устройства подряд
+    connAllBtn.textContent = `выбери ${ROLE_DEVICE[role]}…`;
+    await connectRole(role);
+  }
   connAllBtn.textContent = allConnected() ? "подключено ✓" : "повторить";
   connAllBtn.disabled = allConnected();
 };
