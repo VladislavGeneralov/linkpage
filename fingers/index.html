@@ -129,9 +129,18 @@ const ROLE_LABEL = { thumb: "большой", index: "указательный",
 
 const THRESHOLD = 10; // градусов от начального положения — с этого палец начинает краснеть
 const FULL_BEND = 150; // градусов от начального положения — полный красный
-const BEND_ON = 40;    // загиб засчитывается с этого угла
-const BEND_OFF = 20;   // палец снова прямой ниже этого — гистерезис, чтобы не дребезжало
-const BEND_DEAD_MS = 700; // мёртвое время: гасит дребезг камеры, не мешает настоящему повтору того же пальца
+
+// Загиб распознаётся по движению, а не по абсолютному углу: засчитывается подъём на RISE градусов
+// от последнего минимума, «отпускается» после спада на DROP от пика. Дрейф «нуля» не мешает,
+// и между двумя загибами не нужно разгибать палец до конца.
+const RISE = [25, 35, 35, 35, 35];  // большой палец гнётся меньше остальных
+const DROP = [15, 20, 20, 20, 20];
+const EXT_LEAK = 15;          // °/с — минимум/пик медленно следуют за позой, медленный дрейф не засчитывается
+const BEND_DEAD_MS = 400;     // один и тот же палец не чаще — дрожание даёт ложные повторы
+const CROSS_MS = 250;         // после засчитанного пальца другие молчат: средний тянет за собой указательный
+const WARMUP_MS = 500;        // рука только что появилась — точки ещё скачут, ничего не засчитываем
+const LOST_MS = 300;          // рука пропала дольше — при возвращении снова разогрев
+const ACTIVE_LOST_MS = 1500;  // «считающаяся» рука пропала дольше — считаться начнёт та, что в кадре
 
 // ---------------- Bluetooth: три независимых модуля, по одному на палец ----------------
 // Каждый модуль (XIAO nRF54L15, прошивка fingers_ble_N) понимает одну команду: записать
@@ -558,14 +567,19 @@ function bendColor(delta) {
   return `hsl(${120 * (1 - t)}, 100%, 50%)`;
 }
 
-// Начальное положение: снимается автоматически при первом появлении руки, кнопкой «ноль» — заново
+// Начальное положение для цвета пальцев: снимается автоматически, когда рука успокоилась после
+// появления в кадре, кнопкой «калибровка» — заново. На распознавание загибов не влияет.
 const baseline = {}; // side -> [5 углов]
-const smooth = {};   // side -> [5 углов], сглаживание дрожания
-const bent = {};     // side -> [5 bool], состояние загиба с гистерезисом
-const lastBendAt = {}; // side -> [5 timestamp], для мёртвого времени BEND_DEAD_MS
+
+// Состояние распознавания на руку: side -> { smooth, since, lastSeen, bent[5], ext[5], firedAt[5] }
+// ext — последний минимум угла (палец прямой) или пик (палец согнут), от него меряются RISE/DROP.
+const hands = {};
+let activeSide = null;       // засчитываем загибы только одной руки — той, что первой появилась в кадре
+let lastFireAt = -Infinity;  // для CROSS_MS
+
 const zeroBtn = document.getElementById("zero");
 zeroBtn.onclick = () => {
-  for (const side in smooth) baseline[side] = smooth[side].slice();
+  for (const side in hands) baseline[side] = hands[side].smooth.slice();
   zeroBtn.textContent = "откалибровано ✓";
   zeroBtn.classList.add("flash");
   setTimeout(() => { zeroBtn.textContent = "калибровка"; zeroBtn.classList.remove("flash"); }, 1200);
@@ -578,10 +592,33 @@ let lastHandAt = performance.now();
 
 let lastTime = -1, fps = 0, lastFrame = performance.now();
 
+// Обновляет распознавание одной руки; возвращает кандидатов на «загиб засчитан» в этом кадре
+function trackBends(st, dt, now) {
+  const warm = now - st.since < WARMUP_MS;
+  const found = [];
+  st.smooth.forEach((v, i) => {
+    if (warm) { st.ext[i] = v; st.bent[i] = false; return; }
+    const leak = EXT_LEAK * dt / 1000;
+    if (!st.bent[i]) {
+      st.ext[i] = Math.min(v, st.ext[i] + leak);       // минимум медленно подтягивается за дрейфом позы
+      if (v - st.ext[i] >= RISE[i]) {
+        found.push({ i, rise: v - st.ext[i] });
+        st.bent[i] = true;
+        st.ext[i] = v;
+      }
+    } else {
+      st.ext[i] = Math.max(v, st.ext[i] - leak);
+      if (st.ext[i] - v >= DROP[i]) { st.bent[i] = false; st.ext[i] = v; }
+    }
+  });
+  return found;
+}
+
 function loop() {
   if (video.currentTime !== lastTime) {
     lastTime = video.currentTime;
     const now = performance.now();
+    const dt = Math.min(100, now - lastFrame);
     const res = landmarker.detectForVideo(video, now);
     fps = fps * 0.9 + (1000 / (now - lastFrame)) * 0.1;
     lastFrame = now;
@@ -597,39 +634,43 @@ function loop() {
 
     let text = `fps ${fps.toFixed(0)}  рук: ${res.landmarks.length}  режим: ${gameState}\n`;
 
+    if (activeSide && !(hands[activeSide] && now - hands[activeSide].lastSeen < ACTIVE_LOST_MS)) activeSide = null;
+
     res.landmarks.forEach((lm, h) => {
       const side = res.handedness[h][0].categoryName === "Left" ? "правая" : "левая";
       const wl = res.worldLandmarks[h];
-
       const raw = FINGERS.map(f => bendAngle(wl, f));
-      smooth[side] = smooth[side] ? smooth[side].map((v, i) => v * 0.6 + raw[i] * 0.4) : raw;
-      if (!baseline[side]) baseline[side] = smooth[side].slice();
-      const deltas = smooth[side].map((v, i) => v - baseline[side][i]);
 
-      // Момент загиба (прямой → согнутый): во время записи — шаг попытки; участвуют только 3 пальца
-      bent[side] ??= [false, false, false, false, false];
-      lastBendAt[side] ??= [-Infinity, -Infinity, -Infinity, -Infinity, -Infinity];
-      deltas.forEach((d, i) => {
-        if (!bent[side][i] && d >= BEND_ON) {
-          bent[side][i] = true;
-          // мёртвое время именно для этого пальца: дрожание камеры даёт короткие ложные повторы.
-          // Считаем только во время записи — иначе загиб под конец проигрывания съест первый шаг.
-          if (gameState === "recording" && now - lastBendAt[side][i] >= BEND_DEAD_MS) {
-            lastBendAt[side][i] = now;
-            if (FINGERS[i].role) onFingerBend(FINGERS[i].role);
-          }
-        } else if (bent[side][i] && d < BEND_OFF) {
-          bent[side][i] = false;
+      // Рука только появилась (или вернулась) — состояние с нуля и разогрев без засчитывания
+      let st = hands[side];
+      if (!st || now - st.lastSeen > LOST_MS) {
+        st = hands[side] = { smooth: raw, since: now, lastSeen: now, bent: raw.map(() => false), ext: raw.slice(), firedAt: raw.map(() => -Infinity) };
+      } else {
+        st.smooth = st.smooth.map((v, i) => v * 0.5 + raw[i] * 0.5);
+        st.lastSeen = now;
+      }
+      activeSide ??= side;
+      if (!baseline[side] && now - st.since >= WARMUP_MS) baseline[side] = st.smooth.slice();
+      const deltas = st.smooth.map((v, i) => baseline[side] ? v - baseline[side][i] : 0);
+
+      // Из пальцев, засчитанных в одном кадре, берём один — с самым резким подъёмом
+      const found = trackBends(st, dt, now).filter(c => FINGERS[c.i].role);
+      if (found.length && side === activeSide && gameState === "recording" && now - lastFireAt >= CROSS_MS) {
+        const best = found.reduce((a, b) => b.rise > a.rise ? b : a);
+        if (now - st.firedAt[best.i] >= BEND_DEAD_MS) {
+          st.firedAt[best.i] = lastFireAt = now;
+          onFingerBend(FINGERS[best.i].role);
         }
-      });
+      }
 
       ctx.lineCap = "round";
       ctx.lineWidth = 4;
       ctx.strokeStyle = "rgba(255,255,255,.5)";
       for (const [a, b] of PALM) line(lm[a], lm[b]);
 
-      ctx.lineWidth = 8;
+      // Согнутый (по мнению распознавания) палец — толще: видно, что именно засчитает игра
       FINGERS.forEach((f, i) => {
+        ctx.lineWidth = st.bent[i] ? 12 : 8;
         ctx.strokeStyle = bendColor(deltas[i]);
         for (let k = 1; k < 4; k++) line(lm[f.ids[k - 1]], lm[f.ids[k]]);
       });
@@ -637,9 +678,18 @@ function loop() {
       ctx.fillStyle = "#fff";
       for (const p of lm) { ctx.beginPath(); ctx.arc(...px(p), 4, 0, Math.PI * 2); ctx.fill(); }
 
-      text += `\n${side}:          угол    Δ\n`;
+      // Вспышка на кончике засчитанного пальца
       FINGERS.forEach((f, i) => {
-        text += `  ${f.name.padEnd(9)} ${bent[side][i] ? "●" : "·"}${smooth[side][i].toFixed(0).padStart(4)}° ${deltas[i].toFixed(0).padStart(4)}°\n`;
+        const age = now - st.firedAt[i];
+        if (age > 400) return;
+        ctx.strokeStyle = `rgba(60,207,110,${1 - age / 400})`;
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.arc(...px(lm[f.ids[3]]), 14 + age / 20, 0, Math.PI * 2); ctx.stroke();
+      });
+
+      text += `\n${side}${side === activeSide ? " (считается)" : ""}:   угол    Δ   от ext\n`;
+      FINGERS.forEach((f, i) => {
+        text += `  ${f.name.padEnd(9)} ${st.bent[i] ? "●" : "·"}${st.smooth[i].toFixed(0).padStart(4)}° ${deltas[i].toFixed(0).padStart(4)}° ${(st.smooth[i] - st.ext[i]).toFixed(0).padStart(4)}°\n`;
       });
     });
 
