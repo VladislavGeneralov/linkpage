@@ -50,9 +50,34 @@ async function radioApi(path, params) {
     clearTimeout(timer);
   }
 }
-const radioProgressive = (t) => t.media && t.media.transcodings && t.media.transcodings.find(x => x.format && x.format.protocol === 'progressive');
+// чем играть трек: прямой mp3 (progressive), а если его нет — HLS (AAC в fMP4, сегменты по 10 с).
+// С ноября 2026 SoundCloud у большинства треков прямой mp3 убрал: в плейлисте по умолчанию он остался только у 30-секундных отрывков.
+// HLS играется через MediaSource (hls* ниже); где MediaSource нет (iPhone) — HLS родной, ссылкой в src
+const MSE_OK = !!(window.MediaSource && MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"'));
+const HLS_NATIVE = !MSE_OK && !!document.createElement('audio').canPlayType('application/vnd.apple.mpegurl');
+function radioStreamOf(t) {
+  const list = (t.media && t.media.transcodings) || [];
+  const prog = list.find(x => x.format && x.format.protocol === 'progressive');
+  if (prog || !(MSE_OK || HLS_NATIVE)) return prog;
+  // HLS без шифрования, AAC в mp4; из нескольких — лучший (aac_160k раньше aac_96k)
+  const hls = list.filter(x => x.format && x.format.protocol === 'hls' && /^audio\/mp4/.test(x.format.mime_type));
+  return hls.sort((a, b) => (parseInt(b.preset.replace(/\D+/g, '')) || 0) - (parseInt(a.preset.replace(/\D+/g, '')) || 0))[0];
+}
 // только 30-секундный отрывок: трек SoundCloud Go+ (policy SNIP) — без подписки целиком не отдаётся; такие в очередь не берём
-const radioPreview = (t) => t.policy === 'SNIP' || (radioProgressive(t) || {}).snipped === true || (t.full_duration && t.duration && t.duration < t.full_duration - 1000);
+const radioPreview = (t) => t.policy === 'SNIP' || (radioStreamOf(t) || {}).snipped === true || (t.full_duration && t.duration && t.duration < t.full_duration - 1000);
+// скачать файл (список HLS, сегмент): text / arrayBuffer, не дольше 15 с
+async function radioFetch(url, as) {
+  const stop = new AbortController(), timer = setTimeout(() => stop.abort(), 15000);
+  try {
+    const r = await fetch(url, { signal: stop.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r[as]();
+  } catch (e) {
+    throw e.name === 'AbortError' ? new Error('no response') : e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 function radioStatus(text) { radio.status = text; }
 
 // ссылка на трек или плейлист -> очередь -> играть с первого трека.
@@ -74,16 +99,16 @@ async function radioLoad(url, remember = false, shuffle = false) {
       tracks = tracks.map(t => byId[t.id] || t);
     }
     if (gen !== radio.gen) return;
-    const direct = tracks.filter(radioProgressive);        // треки только с HLS пока пропускаем
+    const direct = tracks.filter(radioStreamOf);           // без потока, который браузер умеет играть (шифрованный HLS) — пропускаем
     const playable = direct.filter(t => !radioPreview(t));  // и те, у которых без подписки есть только отрывок 0:30
-    if (!playable.length) throw new Error(direct.length ? 'only 30 s previews here (SoundCloud Go+)' : 'no tracks with a direct stream');
+    if (!playable.length) throw new Error(direct.length ? 'only 30 s previews here (SoundCloud Go+)' : 'no playable streams');
     radio.queue = playable; radio.listTitle = res.kind === 'playlist' ? (res.title || '') : ''; radio.listNote = '';
     radio.fails = 0; radio.dir = 1;
     if (remember) store.set('tg_radio_url', url);
     await radioPlayIndex(shuffle ? Math.floor(Math.random() * playable.length) : 0);
     // сколько треков выкинуто из списка — строкой в шапке списка, не рядом с названием играющего трека
     // (Влад: «почему в скобках skipped?» — выглядело так, будто пропущен сам этот трек)
-    radio.listNote = [tracks.length > direct.length ? (tracks.length - direct.length) + ' left out: no direct stream' : '',
+    radio.listNote = [tracks.length > direct.length ? (tracks.length - direct.length) + ' left out: no playable stream' : '',
       direct.length > playable.length ? (direct.length - playable.length) + ' left out: only 30 s previews' : ''].filter(Boolean).join(', ');
   } catch (e) {
     if (gen !== radio.gen) return;
@@ -103,13 +128,18 @@ async function radioPlayIndex(i, at = 0) {
   radio.idx = ((i % n) + n) % n;
   const track = radio.queue[radio.idx];
   try {
-    const m = await radioApi('/api/media', { url: radioProgressive(track).url });
+    const tc = radioStreamOf(track);
+    const m = await radioApi('/api/media', { url: tc.url });
     if (gen !== radio.gen) return;
     if (!m.url) throw new Error('no stream link');
+    // HLS через MediaSource: список сегментов скачиваем сразу — не скачался, значит трек не играет (пропуск, как раньше)
+    const list = tc.format.protocol === 'hls' && MSE_OK ? hlsParse(await radioFetch(m.url, 'text'), m.url) : null;
+    if (gen !== radio.gen) return;
     const playing = radio.wantPlay || (radio.mode !== 'stream' && !music.paused);
     music.pause();
     radio.mode = 'stream'; radio.pending = false; radio.resumeAt = at; radio.lastTime = at; radio.wantPlay = playing;
-    radio.el.src = m.url;
+    if (list) hlsOpen(list, tc.format.mime_type, at);
+    else { hlsClose(); radio.el.src = m.url; }
     liveReset();
     radioStatus((track.user ? track.user.username + ' - ' : '') + (track.title || 'untitled'));
     if (playing) radioStart();
@@ -182,6 +212,99 @@ function radioKeys(e) {
   else if (e.code === 'Comma') radioPrev();
   else if (e.code === 'KeyP') { radioToggle(); return true; }
   return false;
+}
+
+// поток перестал играть (ошибка <audio>, не скачался сегмент HLS — чаще всего протухла ссылка):
+// новая ссылка и продолжение с того же места; после 4 попыток подряд — следующий трек
+function radioStreamFail() {
+  if (radio.retries++ < 4) { radio.retryFrom = radio.lastTime; radioPlayIndex(radio.idx, radio.lastTime); }
+  else { console.info('радио: трек пропущен (поток не играет после 4 попыток)'); radio.retries = 0; radio.fails++; radioPlayIndex(radio.idx + radio.dir); }
+}
+
+// ---------- HLS через MediaSource ----------
+// Список .m3u8: init.mp4 (EXT-X-MAP) и сегменты .m4s с длительностями. В буфер <audio> докачивается HLS_AHEAD с вперёд
+// от места игры, отыгранное дальше HLS_BEHIND с позади выкидывается — память не растёт и на многочасовом миксе.
+// Перемотка: качается сегмент, в который попало новое место. Учёт скачанного — по номерам сегментов (have),
+// а не по buffered: длительности из списка и метки времени в самих сегментах могут чуть расходиться.
+const HLS_AHEAD = 40, HLS_BEHIND = 30;
+const hls = { gen: 0, ms: null, sb: null, url: '', segs: [], have: null, busy: false };
+function hlsParse(text, base) {
+  const segs = [];
+  let init = '', dur = 0, t = 0;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('#EXT-X-MAP:')) init = new URL(line.match(/URI="([^"]+)"/)[1], base).href;
+    else if (line.startsWith('#EXT-X-KEY:') && !/METHOD=NONE/.test(line)) throw new Error('encrypted stream');
+    else if (line.startsWith('#EXTINF:')) dur = parseFloat(line.slice(8));
+    else if (line[0] !== '#') { segs.push({ t0: t, t1: t + dur, url: new URL(line, base).href }); t += dur; }
+  }
+  if (!init || !segs.length) throw new Error('bad HLS list');
+  return { init, segs, total: t };
+}
+function hlsClose() {                                      // старый поток больше не нужен: все его колбэки дальше молчат
+  hls.gen++; hls.ms = hls.sb = null; hls.busy = false;
+  if (hls.url) { URL.revokeObjectURL(hls.url); hls.url = ''; }
+}
+function hlsOpen(list, mime, at) {
+  hlsClose();
+  const gen = hls.gen, ms = hls.ms = new MediaSource(), el = radio.el;
+  hls.segs = list.segs; hls.have = new Uint8Array(list.segs.length); hls.busy = true;
+  el.src = hls.url = URL.createObjectURL(ms);
+  ms.addEventListener('sourceopen', async () => {
+    if (gen !== hls.gen) return;
+    try {
+      const sb = ms.addSourceBuffer(mime);
+      ms.duration = list.total;
+      const buf = await radioFetch(list.init, 'arrayBuffer');
+      if (gen !== hls.gen) return;
+      // сперва — на место продолжения (после init известна длина), потом уже качаем сегменты оттуда
+      sb.addEventListener('updateend', () => { if (gen === hls.gen && at > 0) el.currentTime = at; }, { once: true });
+      sb.addEventListener('updateend', hlsPump);
+      hls.sb = sb; hls.busy = false;
+      sb.appendBuffer(buf);
+    } catch (e) {
+      if (gen !== hls.gen) return;
+      console.info('радио: HLS не открылся (' + e.message + ')');
+      hls.busy = false; radioStreamFail();
+    }
+  }, { once: true });
+}
+function hlsPump() {                                       // зовётся на timeupdate / seeking / waiting / конец каждой дозаписи
+  const sb = hls.sb, ms = hls.ms, el = radio.el;
+  if (!sb || hls.busy || sb.updating || radio.mode !== 'stream' || ms.readyState === 'closed') return;
+  const cur = el.currentTime, b = sb.buffered, segs = hls.segs;
+  // лишнее из буфера вон: позади дальше HLS_BEHIND и далеко впереди (осталось после перемотки назад)
+  if (ms.readyState === 'open') for (let i = 0; i < b.length; i++) {
+    const s = b.start(i), e = b.end(i);
+    let a = -1, z = -1;
+    if (s < cur - HLS_BEHIND - 5) { a = s; z = Math.min(e, cur - HLS_BEHIND); }
+    else if (e > cur + HLS_AHEAD + 30) { a = Math.max(s, cur + HLS_AHEAD + 15); z = e; }
+    if (a < 0) continue;
+    for (let k = 0; k < segs.length; k++) if (segs[k].t0 < z && segs[k].t1 > a) hls.have[k] = 0;
+    sb.remove(a, z);
+    return;
+  }
+  // первый нескачанный сегмент от места игры (с запасом 0.3 с назад — чтобы на стыке не было дырки) до HLS_AHEAD вперёд
+  const from = Math.max(0, cur - 0.3);
+  let i = 0;
+  while (i < segs.length - 1 && segs[i].t1 <= from) i++;
+  for (; i < segs.length && segs[i].t0 < cur + HLS_AHEAD; i++) if (!hls.have[i]) return hlsFetch(i);
+  if (i === segs.length && ms.readyState === 'open') ms.endOfStream();   // всё до конца трека уже в буфере
+}
+async function hlsFetch(i) {
+  const gen = hls.gen;
+  hls.busy = true;
+  try {
+    const buf = await radioFetch(hls.segs[i].url, 'arrayBuffer');
+    if (gen !== hls.gen) return;
+    hls.busy = false;
+    hls.sb.appendBuffer(buf); hls.have[i] = 1;             // конец записи (updateend) позовёт hlsPump за следующим
+  } catch (e) {
+    if (gen !== hls.gen) return;
+    console.info('радио: сегмент ' + i + ' не скачался (' + e.message + ')');
+    hls.busy = false; radioStreamFail();
+  }
 }
 
 // ---------- Звуковой граф ----------
@@ -617,9 +740,9 @@ function radioInit() {
   el.addEventListener('error', () => {
     if (radio.mode !== 'stream' || !el.src) return;
     // ссылка на поток живёт считанные минуты: посреди длинного микса берём новую и продолжаем с того же места
-    if (radio.retries++ < 4) { radio.retryFrom = radio.lastTime; radioPlayIndex(radio.idx, radio.lastTime); }
-    else { console.info('радио: трек пропущен (поток не играет после 4 попыток)'); radio.retries = 0; radio.fails++; radioPlayIndex(radio.idx + radio.dir); }
+    radioStreamFail();
   });
+  for (const ev of ['timeupdate', 'seeking', 'waiting', 'play']) el.addEventListener(ev, hlsPump);   // HLS: докачка сегментов
   addEventListener('pointerdown', radioPointerDown);
   addEventListener('pointermove', radioPointerMove);
   for (const ev of ['pointerup', 'pointercancel', 'blur']) addEventListener(ev, radioPointerUp);

@@ -424,7 +424,12 @@ function beachChawengNoi(Bc) {
     for (let k = 0; k < 6; k++) { K.lounger(f, (k - 2.5) * 2.6, 11, '#f2f2ee', '#c8a878'); if (k % 2 === 0) K.umbrella(f, (k - 2.5) * 2.6 + 1.3, 13, '#2ab8b0'); }
   }
   for (const i of [Math.round(N * 0.14), Math.round(N * 0.82)]) {                                   // пляжные клубы на настилах
-    const f = dFrame(Bc, i), d = 12; if (![-5, 0, 5].every((a) => dFree(...dBW(f, a, d), 4))) continue;
+    // настил 10 × 8: все углы и середины сторон — не ближе 1.5 м к КРАЮ дороги (dFree меряет от оси — так клуб встал на
+    // асфальт, Влад: «чего массаж на дороге?»); не влез — ближе к воде, до d = 5
+    const f = dFrame(Bc, i), clear = (d) => groundY(...dBW(f, 0, d)) > 0.15 && [-5, 0, 5].every((a) => [-4, 0, 4].every((dd) => {
+      const [x, z] = dBW(f, a, d + dd), h = roadAt(x, z); return !townBlocked(x, z) && (!h || h.d - h.road.half > 1.5); }));
+    let d = 12; while (d > 5 && !clear(d)) d -= 1;
+    if (!clear(d)) continue;
     const g = dBeachGroup(f, 0, d), T = sculptor(), y = groundY(...dBW(f, 0, d)) + 0.6;
     for (const x of [-4.6, 0, 4.6]) for (const z of [-3.6, 3.6]) T.box(0.2, 1.2, 0.2, x, y - 0.6, z, '#5a4a38');
     T.box(10, 0.2, 8, 0, y, 0, '#9a7a52'); for (let x = -4.8; x < 5; x += 0.5) T.box(0.04, 0.02, 8, x, y + 0.11, 0, '#7a5a3a');
