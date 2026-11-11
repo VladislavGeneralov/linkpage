@@ -1,0 +1,788 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0a0a0a">
+<title>Outliner</title>
+<style>
+  /* Black & white only. --gold = "on" state, --accent = slider knob, --edge = hairlines.
+     --hit is the one non-grey color: the mask tint/contour over the photo (functional, not UI).
+     JS reads --hit via getComputedStyle, so canvas and CSS never drift. */
+  :root{
+    --bg:#000000; --panel:#0a0a0a; --ink:#ffffff; --ink-dim:#7a7a7a;
+    --accent:#ffffff; --accent-dim:#262626; --edge:#2e2e2e; --gold:#ffffff;
+    --btn:#000000; --hit:#ff2bd6;
+  }
+  /* SCDJ lockdown: no pinch/double-tap zoom, no long-press callout, no drag-to-save,
+     no pull-to-refresh/rubber-band, no text selection while dragging sliders. */
+  *{
+    box-sizing:border-box; margin:0; padding:0;
+    -webkit-tap-highlight-color:transparent; -webkit-touch-callout:none; -webkit-user-drag:none;
+    -webkit-user-select:none; user-select:none;
+  }
+  input, textarea{ -webkit-user-select:text; user-select:text; }
+  html, body{
+    height:100%; overflow:hidden; background:var(--bg); color:var(--ink);
+    overscroll-behavior:none; touch-action:manipulation;
+    font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; font-weight:400;
+  }
+  body{ display:flex; justify-content:center; }
+  /* Phone tool first: fixed portrait column even on desktop, sized off the smallest guaranteed viewport. */
+  #app{ position:relative; width:100%; max-width:480px; height:100vh; height:100svh; display:flex; flex-direction:column; }
+
+  .bar{ flex:none; background:var(--panel); display:flex; align-items:flex-start; gap:12px; padding:8px 12px 6px; }
+  #top{ padding-top:calc(8px + env(safe-area-inset-top)); border-bottom:1px solid var(--edge); }
+  #tabs{ justify-content:space-between; padding:8px 14px calc(8px + env(safe-area-inset-bottom)); border-top:1px solid var(--edge); }
+  #status{ flex:1; min-width:0; align-self:center; text-align:center; white-space:pre-line;
+    font-size:9px; line-height:1.5; letter-spacing:.04em; color:var(--ink-dim); overflow:hidden; }
+
+  /* Round control with a small caption under it (klamin .roundCtrlBtn). */
+  .rb{ flex:none; width:48px; display:flex; flex-direction:column; align-items:center; gap:4px;
+    background:none; border:0; color:var(--ink); font:inherit; cursor:pointer; }
+  .rb .c{ width:44px; height:44px; border-radius:50%; background:var(--btn); border:1px solid var(--edge);
+    display:flex; align-items:center; justify-content:center; }
+  .rb svg{ width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  .rb .l{ font-size:8px; letter-spacing:.08em; color:var(--ink-dim); text-transform:uppercase; white-space:nowrap; }
+  .rb:active .c{ background:var(--accent-dim); }
+  .rb.on{ color:var(--gold); }
+  .rb.on .c{ border-color:var(--gold); }
+  .rb.on .l{ color:var(--gold); }
+
+  /* Horizontal toggle: knob left = ФОТО, right = ПРЕВЬЮ; state = knob position, label below. */
+  .tg .c{ background:none; border:0; border-radius:0; }
+  .tg:active .c{ background:none; }
+  .trk{ position:relative; width:32px; height:14px; border:1px solid var(--ink-dim); }
+  .trk i{ position:absolute; top:1px; bottom:1px; left:1px; width:13px; background:var(--gold); }
+  .tg.alt .trk i{ left:auto; right:1px; }
+
+  #view{ flex:1; min-height:0; position:relative; }
+  #cv{ position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  #empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center;
+    padding:40px; font-size:12px; line-height:1.6; color:var(--ink-dim); pointer-events:none; }
+
+  /* Settings sit between preview and tabs, so opening one shrinks the preview instead of covering it. */
+  #panel{ flex:none; display:none; background:var(--panel); border-top:1px solid var(--edge);
+    max-height:44%; overflow-y:auto; padding:10px 14px;
+    grid-template-columns:1fr 1fr; gap:10px 14px; align-content:start; }
+  #panel.open{ display:grid; }
+  .row{ min-width:0; }
+  .row.full{ grid-column:1 / -1; }
+  .lab{ display:flex; justify-content:space-between; gap:6px; margin-bottom:4px; white-space:nowrap;
+    font-size:9px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); }
+  .lab b{ font-weight:400; color:var(--ink); }
+
+  /* Fader look: bordered rectangular track, rectangular knob — nothing round-and-thin. */
+  input[type=range]{ -webkit-appearance:none; appearance:none; display:block; width:100%; height:28px; margin:0;
+    background:var(--bg); border:1px solid var(--ink-dim); touch-action:none; cursor:pointer; }
+  input[type=range]::-webkit-slider-runnable-track{ height:26px; background:transparent; }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:10px; height:26px; background:var(--accent); border:0; border-radius:0; }
+  input[type=range]::-moz-range-track{ height:26px; background:transparent; border:0; }
+  input[type=range]::-moz-range-thumb{ width:10px; height:26px; background:var(--accent); border:0; border-radius:0; }
+
+  .seg{ display:flex; height:28px; border:1px solid var(--ink-dim); }
+  .seg button{ flex:1; min-width:0; overflow:hidden; white-space:nowrap; cursor:pointer;
+    background:var(--bg); color:var(--ink-dim); border:0; border-left:1px solid var(--ink-dim); font:inherit; font-size:10px; }
+  .seg button:first-child{ border-left:0; }
+  .seg button.on{ background:var(--gold); color:var(--bg); }
+
+  .sw{ display:flex; align-items:center; gap:8px; height:28px; }
+  .chip{ position:relative; flex:none; width:44px; height:28px; border:1px solid var(--ink-dim); }
+  .chip input{ position:absolute; inset:0; width:100%; height:100%; opacity:0; border:0; cursor:pointer; }
+  .hint{ font-size:9px; line-height:1.3; color:var(--ink-dim); }
+  .hint.go{ color:var(--gold); }
+
+  .file{ position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar" id="top">
+    <label class="rb" for="inGal"><span class="c"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1"/><circle cx="9" cy="10" r="1.6"/><path d="M4 17.5l5-5 4 4 2.5-2.5 4.5 4.5"/></svg></span><span class="l">Галерея</span></label>
+    <label class="rb" for="inCam"><span class="c"><svg viewBox="0 0 24 24"><path d="M3.5 8h4l1.5-2.5h6L16.5 8h4v11h-17z"/><circle cx="12" cy="13.2" r="3.5"/></svg></span><span class="l">Камера</span></label>
+    <div id="status"></div>
+    <button class="rb tg" id="viewTg"><span class="c"><span class="trk"><i></i></span></span><span class="l" id="viewLbl">Фото</span></button>
+    <button class="rb" id="dl"><span class="c"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg></span><span class="l">Скачать</span></button>
+  </div>
+
+  <div id="view">
+    <canvas id="cv"></canvas>
+    <div id="empty">Загрузи фото из галереи<br>или сними камерой</div>
+  </div>
+
+  <div id="panel"></div>
+
+  <div class="bar" id="tabs">
+    <!-- 1 Цвет: pipette -->
+    <button class="rb" data-p="color"><span class="c"><svg viewBox="0 0 24 24"><path d="M12.5 6.5l5 5"/><path d="M13.5 7.5l3-3a2.12 2.12 0 0 1 3 3l-3 3"/><path d="M14 8l-8 8-1 3 3-1 8-8"/></svg></span><span class="l">Цвет</span></button>
+    <!-- 2 Форма: outline with the filled region inside -->
+    <button class="rb" data-p="form"><span class="c"><svg viewBox="0 0 24 24"><path d="M12 3.5c4.5 0 8 3 7.5 8s-4.5 9-9 8.5S3.5 15 4.5 10 7.5 3.5 12 3.5z"/><path fill="currentColor" stroke="none" d="M12 8c2.2 0 3.8 1.5 3.5 3.8S13.4 16 11.3 15.8 7.7 13.6 8.2 11.3 9.8 8 12 8z"/></svg></span><span class="l">Форма</span></button>
+    <!-- 3 Чистка: broom -->
+    <button class="rb" data-p="clean"><span class="c"><svg viewBox="0 0 24 24"><path d="M20 4l-7 7"/><path d="M10.5 9.5l4 4-2 2c-2 2.5-4.5 4-8 4.5.5-3.5 2-6 4.5-8z"/><path d="M8 16l-2 2M10.5 17.5l-1.5 1.5"/></svg></span><span class="l">Чистка</span></button>
+    <!-- 4 Кривые: bezier with handles -->
+    <button class="rb" data-p="curve"><span class="c"><svg viewBox="0 0 24 24"><path d="M5 18C9 6 15 6 19 18"/><path d="M5 18L9 6M19 18L15 6" stroke-width="1"/><circle cx="9" cy="6" r="1.4"/><circle cx="15" cy="6" r="1.4"/><rect x="3.5" y="16.5" width="3" height="3"/><rect x="17.5" y="16.5" width="3" height="3"/></svg></span><span class="l">Кривые</span></button>
+    <!-- 5 Вывод: document -->
+    <button class="rb" data-p="out"><span class="c"><svg viewBox="0 0 24 24"><path d="M6.5 3.5H14l4 4v13H6.5z"/><path d="M14 3.5v4h4"/><path d="M9 15.5c1.5-3 4.5-3 6 0"/></svg></span><span class="l">Вывод</span></button>
+  </div>
+
+  <input class="file" type="file" id="inGal" accept="image/*">
+  <input class="file" type="file" id="inCam" accept="image/*" capture="environment">
+</div>
+
+<script>
+'use strict';
+
+// ---------- Mobile lockdown (belt-and-suspenders on top of the CSS, from SCDJ) ----------
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('dragstart', e => e.preventDefault());
+['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+document.addEventListener('touchmove', e => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+document.addEventListener('selectstart', e => {
+  const t = e.target && e.target.tagName;
+  if (t !== 'INPUT' && t !== 'TEXTAREA') e.preventDefault();
+});
+// A photo dropped onto the page (desktop) is loaded instead of the browser navigating to it.
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+// ---------- Settings ----------
+const DEF = {
+  // 1 Цвет
+  pick: { h: 80, s: 0.6, v: 0.45 }, tol: 25, grab: 50, sMin: 30, vMin: 5, vMax: 95,
+  // 2 Форма
+  fillInside: 1, contour: 'outer', largest: 1, second: 0, pick2: { h: 48, s: 0.8, v: 0.85 }, tol2: 15,
+  // 3 Чистка (radii are at a 1000px reference, scaled to the processing size)
+  close: 6, smooth: 3, minArea: 0.3,
+  // 4 Кривые
+  curve: 75, simplify: 1, res: 1200,
+  // 5 Вывод
+  mode: 'line', strokePx: 1, strokeMM: 0.3, lineColor: '#000000', fillColor: '#000000',
+  canvas: 'photo', pad: 5, units: 'px', widthMM: 100,
+  view: 'photo',
+};
+const KEY = 'outliner.v1';
+let S;
+try { S = Object.assign({}, DEF, JSON.parse(localStorage.getItem(KEY) || '{}')); }
+catch (e) { S = Object.assign({}, DEF); }
+const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+// Which pipeline stage a setting invalidates: -1 re-prep, 0 color mask, 1 cleanup, 2 curves, 3 output, 4 redraw.
+const STAGE = { res: -1, pick: 0, tol: 0, grab: 0, sMin: 0, vMin: 0, vMax: 0, second: 0, pick2: 0, tol2: 0,
+  fillInside: 1, largest: 1, close: 1, smooth: 1, minArea: 1, contour: 2, curve: 2, simplify: 2,
+  lineColor: 4, fillColor: 4 };
+const stageOf = k => (k in STAGE ? STAGE[k] : 3);
+
+const PANELS = {
+  color: [
+    { t: 'pick', k: 'pick', label: 'Цвет' },
+    { t: 'r', k: 'tol', label: 'Допуск оттенка', min: 2, max: 90, unit: '°' },
+    { t: 'r', k: 'grab', label: 'Подхват тонких мест', min: 0, max: 100, unit: '%' },
+    { t: 'r', k: 'sMin', label: 'Мин. насыщенность', min: 0, max: 100, unit: '%' },
+    { t: 'r', k: 'vMin', label: 'Яркость от', min: 0, max: 100, unit: '%' },
+    { t: 'r', k: 'vMax', label: 'Яркость до', min: 0, max: 100, unit: '%' },
+  ],
+  form: [
+    { t: 's', k: 'fillInside', label: 'Внутри', opts: [[1, 'Залить'], [0, 'Пусто']] },
+    { t: 's', k: 'contour', label: 'Контур', opts: [['outer', 'Внешний'], ['all', 'Все']] },
+    { t: 's', k: 'largest', label: 'Фигуры', opts: [[1, 'Крупнейшая'], [0, 'Все']] },
+    { t: 's', k: 'second', label: 'Второй цвет', opts: [[0, 'Нет'], [1, 'Да']] },
+    { t: 'pick', k: 'pick2', label: 'Второй цвет', show: () => S.second },
+    { t: 'r', k: 'tol2', label: 'Допуск', min: 2, max: 90, unit: '°', show: () => S.second },
+  ],
+  clean: [
+    { t: 'r', k: 'close', label: 'Закрыть разрывы', min: 0, max: 40 },
+    { t: 'r', k: 'smooth', label: 'Сглаживание', min: 0, max: 30 },
+    { t: 'r', k: 'minArea', label: 'Убрать мелкое', min: 0, max: 5, step: 0.05, unit: '%' },
+  ],
+  curve: [
+    { t: 'r', k: 'curve', label: 'Плавность', min: 0, max: 100, unit: '%' },
+    { t: 'r', k: 'simplify', label: 'Упрощение', min: 0.5, max: 8, step: 0.1 },
+    { t: 's', k: 'res', label: 'Точность обработки, px', full: 1, opts: [[800, '800'], [1200, '1200'], [1600, '1600'], [2400, '2400']] },
+  ],
+  out: [
+    { t: 's', k: 'mode', label: 'Рисовать', full: 1, opts: [['line', 'Линия'], ['fill', 'Заливка'], ['both', 'Линия + заливка']] },
+    { t: 'r', k: 'strokePx', label: 'Толщина', min: 0.5, max: 20, step: 0.5, unit: ' px', show: () => S.units === 'px' && S.mode !== 'fill' },
+    { t: 'r', k: 'strokeMM', label: 'Толщина', min: 0.05, max: 3, step: 0.05, unit: ' мм', show: () => S.units === 'mm' && S.mode !== 'fill' },
+    { t: 'c', k: 'lineColor', label: 'Цвет линии', show: () => S.mode !== 'fill' },
+    { t: 'c', k: 'fillColor', label: 'Цвет заливки', show: () => S.mode !== 'line' },
+    { t: 's', k: 'canvas', label: 'Холст', opts: [['photo', 'Как фото'], ['crop', 'По контуру']] },
+    { t: 'r', k: 'pad', label: 'Отступ', min: 0, max: 30, unit: '%', show: () => S.canvas === 'crop' },
+    { t: 's', k: 'units', label: 'Единицы', opts: [['px', 'px'], ['mm', 'мм']] },
+    { t: 'r', k: 'widthMM', label: 'Ширина', min: 10, max: 600, unit: ' мм', show: () => S.units === 'mm' },
+  ],
+};
+
+// ---------- DOM ----------
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d'), view = $('view'), panelEl = $('panel'), statusEl = $('status');
+const viewTg = $('viewTg'), viewLbl = $('viewLbl');
+const tabs = [...document.querySelectorAll('#tabs .rb')];
+const HIT = getComputedStyle(document.documentElement).getPropertyValue('--hit').trim() || '#ff2bd6';
+
+// ---------- State ----------
+// src = the photo downscaled to <= 2400px (the full decoded photo is dropped right after load).
+let src = null, fileBase = 'photo', OW = 0, OH = 0, loadTok = 0, workC = null;
+let W = 0, H = 0, R8 = null, G8 = null, B8 = null, HUE = null, SAT = null, VAL = null;
+// Two processing grids: full (S.res) and a coarse 800px one used while a slider or the pipette is dragged.
+let grids = null, draft = false;
+let maskA = null, maskF = null, tint = null, curves = [], workPath = null, OUT = null;
+let dirty = 5, raf = 0, openId = null, viewT = null, viewRect = null, dpr = 1, msg = '', err = '';
+
+const K = () => Math.max(W, H) / 1000;
+const mkCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const fmt = v => String(Math.round(v * 100) / 100);
+
+function hsvOf(r, g, b) {
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn;
+  let h = 0;
+  if (c) {
+    if (mx === r) h = ((g - b) / c) % 6; else if (mx === g) h = (b - r) / c + 2; else h = (r - g) / c + 4;
+    h *= 60; if (h < 0) h += 360;
+  }
+  return { h, s: mx ? c / mx : 0, v: mx / 255 };
+}
+function hsvHex(p) {
+  const f = n => { const k = (n + p.h / 60) % 6; return Math.round(255 * (p.v - p.v * p.s * Math.max(0, Math.min(k, 4 - k, 1)))); };
+  return '#' + [f(5), f(3), f(1)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+// ---------- Loading ----------
+async function loadFile(f) {
+  if (!f || (f.type && !/^image\//.test(f.type))) return;
+  const tok = ++loadTok, url = URL.createObjectURL(f), im = new Image();
+  im.src = url;
+  try { await im.decode(); }
+  catch (e) { URL.revokeObjectURL(url); if (tok === loadTok) { msg = 'не удалось открыть это фото'; invalidate(4); } return; }
+  if (tok !== loadTok) { URL.revokeObjectURL(url); return; } // a newer pick already won
+  OW = im.naturalWidth; OH = im.naturalHeight;
+  fileBase = (f.name || 'photo').replace(/\.[^.]*$/, '') || 'photo';
+  // One capped copy serves both display and processing; iOS frees canvas memory only on GC,
+  // so the old one is shrunk to 0 explicitly.
+  const k = Math.min(1, 2400 / Math.max(OW, OH));
+  if (src) src.width = src.height = 0;
+  src = mkCanvas(Math.round(OW * k), Math.round(OH * k));
+  const sx = src.getContext('2d'); sx.imageSmoothingQuality = 'high'; sx.drawImage(im, 0, 0, src.width, src.height);
+  URL.revokeObjectURL(url); msg = '';
+  $('empty').style.display = 'none';
+  S.view = 'photo'; syncTop();
+  if (!openId) openPanel('color'); else buildPanel();
+  invalidate(-1);
+}
+for (const id of ['inGal', 'inCam']) {
+  $(id).addEventListener('change', e => { const f = e.target.files && e.target.files[0]; e.target.value = ''; loadFile(f); });
+}
+
+// ---------- Image ops (all on the W x H processing grid) ----------
+// Separable sliding window along rows (step 1) or columns (step W).
+function boxPass(a, b, len, lines, step, lstep, r) {
+  const d = 2 * r + 1;
+  for (let l = 0; l < lines; l++) {
+    const base = l * lstep; let s = 0;
+    for (let i = -r; i <= r; i++) s += a[base + Math.min(len - 1, Math.max(0, i)) * step];
+    for (let i = 0; i < len; i++) {
+      b[base + i * step] = s / d;
+      s += a[base + Math.min(len - 1, i + r + 1) * step] - a[base + Math.max(0, i - r) * step];
+    }
+  }
+}
+function blur(a, r) {
+  const t = new Float32Array(a.length), o = new Float32Array(a.length);
+  boxPass(a, t, W, H, 1, W, r); boxPass(t, o, H, W, W, 1, r);
+  return o;
+}
+// Square dilate/erode along one axis (erode counts only in-bounds pixels).
+function morphPass(a, b, len, lines, step, lstep, r, dil) {
+  for (let l = 0; l < lines; l++) {
+    const base = l * lstep; let c = 0;
+    for (let i = 0; i <= Math.min(r, len - 1); i++) c += a[base + i * step];
+    for (let i = 0; i < len; i++) {
+      const cnt = Math.min(len - 1, i + r) - Math.max(0, i - r) + 1;
+      b[base + i * step] = dil ? (c > 0 ? 1 : 0) : (c === cnt ? 1 : 0);
+      if (i + r + 1 < len) c += a[base + (i + r + 1) * step];
+      if (i - r >= 0) c -= a[base + (i - r) * step];
+    }
+  }
+}
+// Closing on a grid padded with r empty pixels each side: outside the photo counts as empty,
+// so a shape near the edge isn't glued to it, and edge pixels still erode correctly.
+function closeMask(m, r) {
+  const pw = W + 2 * r, ph = H + 2 * r, p = new Uint8Array(pw * ph), t = new Uint8Array(pw * ph);
+  for (let y = 0; y < H; y++) p.set(m.subarray(y * W, y * W + W), (y + r) * pw + r);
+  morphPass(p, t, pw, ph, 1, pw, r, true); morphPass(t, p, ph, pw, pw, 1, r, true);
+  morphPass(p, t, pw, ph, 1, pw, r, false); morphPass(t, p, ph, pw, pw, 1, r, false);
+  const out = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) out.set(p.subarray((y + r) * pw + r, (y + r) * pw + r + W), y * W);
+  return out;
+}
+// Connected components of pixels equal to val. Foreground 8-connected, background 4-connected.
+function label(m, val, c8) {
+  const n = W * H, lab = new Int32Array(n), st = new Int32Array(n), size = [0], border = [0];
+  let L = 0;
+  for (let s = 0; s < n; s++) {
+    if (m[s] !== val || lab[s]) continue;
+    L++; let sp = 0, cnt = 0, b = 0;
+    lab[s] = L; st[sp++] = s;
+    while (sp) {
+      const i = st[--sp], x = i % W, y = (i - x) / W; cnt++;
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) b = 1;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= H) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          if ((!dx && !dy) || (!c8 && dx && dy)) continue;
+          const xx = x + dx; if (xx < 0 || xx >= W) continue;
+          const j = yy * W + xx;
+          if (m[j] === val && !lab[j]) { lab[j] = L; st[sp++] = j; }
+        }
+      }
+    }
+    size.push(cnt); border.push(b);
+  }
+  return { lab, size, border, count: L };
+}
+
+// ---------- Pipeline ----------
+function prepWork() {
+  grids = null; // let the old arrays go before allocating new ones
+  const full = buildGrid(S.res);
+  grids = { full, draft: S.res > 800 ? buildGrid(800) : full };
+  useGrid(draft ? grids.draft : grids.full);
+}
+function useGrid(g) { ({ W, H, R8, G8, B8, HUE, SAT, VAL } = g); }
+function setDraft(on) {
+  if (on === draft) return;
+  draft = on;
+  if (!grids || grids.draft === grids.full) return;
+  useGrid(on ? grids.draft : grids.full);
+  invalidate(0);
+}
+function buildGrid(res) {
+  const k = Math.min(1, res / Math.max(OW, OH));
+  W = Math.max(8, Math.round(OW * k)); H = Math.max(8, Math.round(OH * k));
+  if (!workC) workC = mkCanvas(1, 1);
+  workC.width = W; workC.height = H;
+  const x = workC.getContext('2d', { willReadFrequently: true });
+  x.imageSmoothingQuality = 'high'; x.drawImage(src, 0, 0, W, H);
+  const d = x.getImageData(0, 0, W, H).data, n = W * H, r = Math.max(1, Math.round(2 * K()));
+  workC.width = workC.height = 1; // release the backing store right away
+  const ch = o => { const a = new Float32Array(n); for (let i = 0; i < n; i++) a[i] = d[i * 4 + o]; return new Uint8ClampedArray(blur(blur(a, r), r)); };
+  R8 = ch(0); G8 = ch(1); B8 = ch(2);
+  HUE = new Float32Array(n); SAT = new Uint8Array(n); VAL = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = hsvOf(R8[i], G8[i], B8[i]);
+    HUE[i] = p.h; SAT[i] = Math.round(p.s * 255); VAL[i] = Math.round(p.v * 255);
+  }
+  return { W, H, R8, G8, B8, HUE, SAT, VAL };
+}
+
+function match(out, pk, tol, sMin, vMin, vMax) {
+  const n = W * H;
+  if (pk.s < 0.15) { // grey/black/white pick: hue means nothing, match by brightness instead
+    const v0 = pk.v * 255, dv = tol / 180 * 255;
+    for (let i = 0; i < n; i++) out[i] = (SAT[i] < 77 && Math.abs(VAL[i] - v0) <= dv) ? 1 : 0;
+    return out;
+  }
+  const s0 = sMin * 2.55, a = vMin * 2.55, b = vMax * 2.55, h0 = pk.h;
+  for (let i = 0; i < n; i++) {
+    const v = VAL[i];
+    if (SAT[i] < s0 || v < a || v > b) { out[i] = 0; continue; }
+    let dh = Math.abs(HUE[i] - h0); if (dh > 180) dh = 360 - dh;
+    out[i] = dh <= tol ? 1 : 0;
+  }
+  return out;
+}
+// Hysteresis: keep weak pixels only where they connect to confident ones (picks up thin, faded parts).
+function grow(strong, weak) {
+  const n = W * H, out = new Uint8Array(n), st = new Int32Array(n);
+  let sp = 0;
+  for (let i = 0; i < n; i++) if (strong[i]) { out[i] = 1; st[sp++] = i; }
+  while (sp) {
+    const i = st[--sp], x = i % W, y = (i - x) / W;
+    for (let dy = -1; dy <= 1; dy++) {
+      const yy = y + dy; if (yy < 0 || yy >= H) continue;
+      for (let dx = -1; dx <= 1; dx++) {
+        const xx = x + dx; if (xx < 0 || xx >= W) continue;
+        const j = yy * W + xx;
+        if (weak[j] && !out[j]) { out[j] = 1; st[sp++] = j; }
+      }
+    }
+  }
+  return out;
+}
+
+function stageA() {
+  const n = W * H, g = S.grab / 100;
+  let m = match(new Uint8Array(n), S.pick, S.tol, S.sMin, S.vMin, S.vMax);
+  if (g > 0) {
+    const weak = match(new Uint8Array(n), S.pick, Math.min(180, S.tol * (1 + 0.6 * g)),
+      S.sMin * (1 - 0.5 * g), S.vMin * (1 - 0.5 * g), S.vMax + (100 - S.vMax) * 0.5 * g);
+    m = grow(m, weak);
+  }
+  if (S.second) {
+    const m2 = match(new Uint8Array(n), S.pick2, S.tol2, S.sMin, 0, 100);
+    for (let i = 0; i < n; i++) if (m2[i]) m[i] = 1;
+  }
+  maskA = m;
+  // Magenta tint of what the color settings catch, shown over the photo.
+  if (!tint || tint.width !== W || tint.height !== H) tint = mkCanvas(W, H);
+  const tx = tint.getContext('2d'), id = tx.createImageData(W, H), px = new Uint32Array(id.data.buffer);
+  for (let i = 0; i < n; i++) px[i] = m[i] ? 0xffd62bff : 0; // ABGR little-endian = #ff2bd6
+  tx.putImageData(id, 0, 0);
+}
+
+function stageB() {
+  const n = W * H, k = K();
+  let m = maskA.slice();
+  const rc = Math.round(S.close * k);
+  if (rc > 0) m = closeMask(m, rc);
+  const rs = Math.round(S.smooth * k);
+  if (rs > 0) {
+    const f = blur(blur(Float32Array.from(m), rs), rs);
+    for (let i = 0; i < n; i++) m[i] = f[i] >= 0.5 ? 1 : 0;
+  }
+  const minPx = Math.round(S.minArea / 100 * n);
+  if (S.largest || minPx > 0) {
+    const fg = label(m, 1, true);
+    if (fg.count) {
+      if (S.largest) {
+        let best = 1;
+        for (let l = 2; l <= fg.count; l++) if (fg.size[l] > fg.size[best]) best = l;
+        for (let i = 0; i < n; i++) m[i] = fg.lab[i] === best ? 1 : 0;
+      } else {
+        for (let i = 0; i < n; i++) if (m[i] && fg.size[fg.lab[i]] < minPx) m[i] = 0;
+      }
+    }
+  }
+  if (S.fillInside || minPx > 0) {
+    const bg = label(m, 0, false);
+    for (let i = 0; i < n; i++) {
+      if (m[i]) continue;
+      const l = bg.lab[i];
+      if (!bg.border[l] && (S.fillInside || bg.size[l] < minPx)) m[i] = 1;
+    }
+  }
+  maskF = m;
+}
+
+// Boundary of the mask as closed loops along pixel edges. Each edge runs clockwise around its
+// filled pixel, so outer loops have positive area and holes negative. At a diagonal "saddle"
+// the walk turns left, which keeps diagonal pixels in one shape (matches 8-connectivity).
+const DX = [1, 0, -1, 0], DY = [0, 1, 0, -1];
+function traceLoops(m) {
+  const VW = W + 1, out = new Uint8Array(VW * (H + 1));
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!m[y * W + x]) continue;
+    if (y === 0 || !m[(y - 1) * W + x]) out[y * VW + x] |= 1;               // top, going right
+    if (x === W - 1 || !m[y * W + x + 1]) out[y * VW + x + 1] |= 2;         // right, going down
+    if (y === H - 1 || !m[(y + 1) * W + x]) out[(y + 1) * VW + x + 1] |= 4; // bottom, going left
+    if (x === 0 || !m[y * W + x - 1]) out[(y + 1) * VW + x] |= 8;           // left, going up
+  }
+  const loops = [];
+  for (let v = 0; v < out.length; v++) {
+    while (out[v]) {
+      const pts = [];
+      let cvx = v % VW, cvy = (v - cvx) / VW, cur = v, cd = -1;
+      for (;;) {
+        const bits = out[cur]; if (!bits) break;
+        let nd;
+        if (cd < 0) nd = bits & 1 ? 0 : bits & 2 ? 1 : bits & 4 ? 2 : 3;
+        else if (bits & (1 << cd)) nd = cd;
+        else if (bits & (1 << ((cd + 3) & 3))) nd = (cd + 3) & 3;
+        else if (bits & (1 << ((cd + 1) & 3))) nd = (cd + 1) & 3;
+        else break;
+        out[cur] &= ~(1 << nd);
+        if (nd !== cd) pts.push(cvx, cvy);
+        cd = nd; cvx += DX[nd]; cvy += DY[nd]; cur = cvy * VW + cvx;
+      }
+      if (pts.length >= 6) loops.push(pts);
+    }
+  }
+  return loops;
+}
+function area(p) {
+  let a = 0; const n = p.length;
+  for (let i = 0; i < n; i += 2) { const j = (i + 2) % n; a += p[i] * p[j + 1] - p[j] * p[i + 1]; }
+  return a / 2;
+}
+// Ramer-Douglas-Peucker on a closed loop, split at point 0 and the point farthest from it.
+function rdpClosed(p, eps) {
+  const n = p.length / 2; if (n <= 4) return p;
+  let far = 0, fd = -1;
+  for (let i = 1; i < n; i++) { const dx = p[2 * i] - p[0], dy = p[2 * i + 1] - p[1], d = dx * dx + dy * dy; if (d > fd) { fd = d; far = i; } }
+  const keep = new Uint8Array(n); keep[0] = 1; keep[far] = 1;
+  const st = [0, far, far, n];
+  while (st.length) {
+    const b = st.pop(), a = st.pop(); if (b - a < 2) continue;
+    const bi = b % n, ax = p[2 * a], ay = p[2 * a + 1], dx = p[2 * bi] - ax, dy = p[2 * bi + 1] - ay, L = Math.hypot(dx, dy) || 1e-9;
+    let md = -1, mi = -1;
+    for (let i = a + 1; i < b; i++) { const d = Math.abs(dy * (p[2 * i] - ax) - dx * (p[2 * i + 1] - ay)) / L; if (d > md) { md = d; mi = i; } }
+    if (md > eps) { keep[mi] = 1; st.push(a, mi, mi, b); }
+  }
+  const o = [];
+  for (let i = 0; i < n; i++) if (keep[i]) o.push(p[2 * i], p[2 * i + 1]);
+  return o;
+}
+// Polygon -> cubic Beziers. A vertex turning more than thr degrees stays a sharp corner,
+// the rest get Catmull-Rom tangents.
+function toBezier(p, thr) {
+  const n = p.length / 2, X = i => p[2 * ((i + n) % n)], Y = i => p[2 * ((i + n) % n) + 1], cor = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const ax = X(i) - X(i - 1), ay = Y(i) - Y(i - 1), bx = X(i + 1) - X(i), by = Y(i + 1) - Y(i);
+    const c = (ax * bx + ay * by) / ((Math.hypot(ax, ay) * Math.hypot(bx, by)) || 1);
+    cor[i] = Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI > thr ? 1 : 0;
+  }
+  const seg = [];
+  for (let i = 0; i < n; i++) {
+    const j = i + 1, cj = cor[j % n];
+    if (cor[i] && cj) { seg.push(null); continue; }
+    // Handles clamped to a third of this segment: a short segment next to a long one can't loop or overshoot.
+    const lim = Math.hypot(X(j) - X(i), Y(j) - Y(i)) / 3;
+    const hd = (tx, ty) => { const l = Math.hypot(tx, ty); return l > lim ? [tx * lim / l, ty * lim / l] : [tx, ty]; };
+    const a = cor[i] ? [0, 0] : hd((X(j) - X(i - 1)) / 6, (Y(j) - Y(i - 1)) / 6);
+    const b = cj ? [0, 0] : hd((X(j + 1) - X(i)) / 6, (Y(j + 1) - Y(i)) / 6);
+    seg.push([X(i) + a[0], Y(i) + a[1], X(j) - b[0], Y(j) - b[1]]);
+  }
+  return { p, seg };
+}
+function pathD(cs, s, ox, oy, dec) {
+  const q = 10 ** dec, f = v => Math.round(v * q) / q, P = (x, y) => f(x * s - ox) + ',' + f(y * s - oy);
+  let d = '';
+  for (const c of cs) {
+    const p = c.p, n = p.length / 2;
+    d += 'M' + P(p[0], p[1]);
+    for (let i = 0; i < n; i++) {
+      const j = ((i + 1) % n) * 2, g = c.seg[i];
+      d += g ? 'C' + P(g[0], g[1]) + ' ' + P(g[2], g[3]) + ' ' + P(p[j], p[j + 1]) : 'L' + P(p[j], p[j + 1]);
+    }
+    d += 'Z';
+  }
+  return d;
+}
+
+function stageC() {
+  const eps = S.simplify * K(), thr = S.curve * 1.8;
+  curves = [];
+  for (const L of traceLoops(maskF)) {
+    const a = area(L);
+    if (Math.abs(a) < 4 || (S.contour === 'outer' && a < 0)) continue;
+    const p = rdpClosed(L, eps);
+    if (p.length >= 6) curves.push(toBezier(p, thr));
+  }
+  workPath = curves.length ? new Path2D(pathD(curves, 1, 0, 0, 2)) : null;
+}
+
+// Output geometry: same path data feeds both the preview and the downloaded file.
+function stageD() {
+  OUT = null; if (!curves.length) return;
+  const f = OW / W, mm = S.units === 'mm', sw = mm ? S.strokeMM : S.strokePx;
+  let x0 = 0, y0 = 0, w = OW, h = OH, u = 1;
+  if (S.canvas === 'crop') {
+    let a = Infinity, b = Infinity, c = -Infinity, e = -Infinity;
+    const add = (x, y) => { if (x < a) a = x; if (x > c) c = x; if (y < b) b = y; if (y > e) e = y; };
+    for (const cu of curves) {
+      for (let i = 0; i < cu.p.length; i += 2) add(cu.p[i], cu.p[i + 1]);
+      for (const g of cu.seg) if (g) { add(g[0], g[1]); add(g[2], g[3]); }
+    }
+    a *= f; b *= f; c *= f; e *= f;
+    const pad = S.pad / 100 * Math.max(c - a, e - b);
+    x0 = a - pad; y0 = b - pad; w = c - a + 2 * pad; h = e - b + 2 * pad;
+    if (mm) u = S.widthMM / w;
+    // Room for half the stroke, so pad=0 doesn't clip the line at the viewBox edge.
+    const half = S.mode !== 'fill' ? sw / 2 / u : 0;
+    x0 -= half; y0 -= half; w += 2 * half; h += 2 * half;
+  } else if (mm) u = S.widthMM / w;
+  const d = pathD(curves, f * u, x0 * u, y0 * u, mm ? 3 : 1);
+  OUT = { d, w: w * u, h: h * u, sw, unit: mm ? 'mm' : '', path: new Path2D(d) };
+}
+
+function svgText() {
+  const o = OUT, line = S.mode !== 'fill', fill = S.mode !== 'line', r = v => Math.round(v * 1000) / 1000;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${r(o.w)}${o.unit}" height="${r(o.h)}${o.unit}" viewBox="0 0 ${r(o.w)} ${r(o.h)}">\n` +
+    `<path fill="${fill ? S.fillColor : 'none'}" fill-rule="nonzero"` +
+    (line ? ` stroke="${S.lineColor}" stroke-width="${o.sw}" stroke-linejoin="round"` : '') +
+    ` d="${o.d}"/>\n</svg>\n`;
+}
+
+// ---------- Scheduling ----------
+function invalidate(level) {
+  if (level < dirty) dirty = level;
+  if (!raf) raf = requestAnimationFrame(run);
+}
+function run() {
+  raf = 0;
+  const l = dirty; dirty = 5;
+  if (src) {
+    try {
+      if (l <= -1) prepWork();
+      if (l <= 0) stageA();
+      if (l <= 1) stageB();
+      if (l <= 2) stageC();
+      if (l <= 3) stageD();
+      err = '';
+    } catch (e) {
+      console.error(e);
+      err = 'не хватило памяти — уменьши точность';
+      curves = []; workPath = null; OUT = null;
+      dirty = grids ? Math.min(l, 0) : -1; // next change recomputes from a known-good point
+    }
+  }
+  render();
+  let t = msg || err;
+  if (!t && src) {
+    const nodes = curves.reduce((s, c) => s + c.p.length / 2, 0);
+    t = OW + '×' + OH + '\n' + (curves.length ? 'контуров ' + curves.length + ' · узлов ' + nodes : 'контур не найден');
+  }
+  statusEl.textContent = t;
+  save();
+}
+
+// ---------- Drawing ----------
+function resize() {
+  dpr = Math.min(3, window.devicePixelRatio || 1);
+  viewRect = view.getBoundingClientRect();
+  const w = Math.max(1, Math.round(viewRect.width * dpr)), h = Math.max(1, Math.round(viewRect.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  render();
+}
+new ResizeObserver(resize).observe(view);
+
+function render() {
+  const cw = cv.width, ch = cv.height, m = 8 * dpr;
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cw, ch);
+  viewT = null;
+  if (!src || !W) return;
+  if (S.view === 'photo') {
+    const sc = Math.min((cw - 2 * m) / W, (ch - 2 * m) / H), ox = (cw - W * sc) / 2, oy = (ch - H * sc) / 2;
+    // Image rect in CSS px; the pipette maps through it as 0..1, so it doesn't care which grid is active.
+    viewT = { ox: ox / dpr, oy: oy / dpr, w: W * sc / dpr, h: H * sc / dpr };
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(src, ox, oy, W * sc, H * sc);
+    if (tint) { ctx.globalAlpha = 0.4; ctx.drawImage(tint, ox, oy, W * sc, H * sc); ctx.globalAlpha = 1; }
+    if (workPath) {
+      ctx.setTransform(sc, 0, 0, sc, ox, oy);
+      ctx.lineWidth = 2 * dpr / sc; ctx.lineJoin = 'round'; ctx.strokeStyle = HIT; ctx.stroke(workPath);
+    }
+  } else if (OUT) {
+    const o = OUT, sc = Math.min((cw - 2 * m) / o.w, (ch - 2 * m) / o.h), ox = (cw - o.w * sc) / 2, oy = (ch - o.h * sc) / 2;
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(ox, oy, o.w * sc, o.h * sc);
+    ctx.setTransform(sc, 0, 0, sc, ox, oy);
+    if (S.mode !== 'line') { ctx.fillStyle = S.fillColor; ctx.fill(o.path, 'nonzero'); }
+    // True line width, but never thinner than one device pixel so a 1px line on a 4000px photo stays visible.
+    if (S.mode !== 'fill') { ctx.lineWidth = Math.max(o.sw, 1 / sc); ctx.lineJoin = 'round'; ctx.strokeStyle = S.lineColor; ctx.stroke(o.path); }
+  }
+}
+
+// ---------- Pipette ----------
+function pickTarget() {
+  if (!src || S.view !== 'photo') return null;
+  if (openId === 'color') return 'pick';
+  if (openId === 'form' && S.second) return 'pick2';
+  return null;
+}
+function pickAt(e, t) {
+  if (!t || !viewT) return;
+  const u = (e.clientX - viewRect.left - viewT.ox) / viewT.w, v = (e.clientY - viewRect.top - viewT.oy) / viewT.h;
+  if (u < 0 || v < 0 || u >= 1 || v >= 1) return;
+  const x = Math.floor(u * W), y = Math.floor(v * H);
+  const r = Math.max(1, Math.round(2 * K()));
+  let sr = 0, sg = 0, sb = 0, c = 0;
+  for (let yy = Math.max(0, y - r); yy <= Math.min(H - 1, y + r); yy++)
+    for (let xx = Math.max(0, x - r); xx <= Math.min(W - 1, x + r); xx++) { const i = yy * W + xx; sr += R8[i]; sg += G8[i]; sb += B8[i]; c++; }
+  const p = hsvOf(sr / c, sg / c, sb / c);
+  S[t] = { h: Math.round(p.h), s: Math.round(p.s * 1000) / 1000, v: Math.round(p.v * 1000) / 1000 };
+  const hex = hsvHex(S[t]), chip = panelEl.querySelector(`[data-chip="${t}"]`), val = panelEl.querySelector(`[data-val="${t}"]`);
+  if (chip) chip.style.background = hex;
+  if (val) val.textContent = hex;
+  invalidate(0);
+}
+let picking = false;
+cv.addEventListener('pointerdown', e => {
+  const t = pickTarget(); if (!t) return;
+  viewRect = view.getBoundingClientRect(); // iOS can shift the page after the photo picker closes
+  picking = true; cv.setPointerCapture(e.pointerId); setDraft(true); pickAt(e, t);
+});
+cv.addEventListener('pointermove', e => { if (picking) pickAt(e, pickTarget()); });
+// Any finger lift (pipette or slider) ends the coarse draft and runs the full-resolution pass once.
+const endDrag = () => { picking = false; setDraft(false); };
+window.addEventListener('pointerup', endDrag);
+window.addEventListener('pointercancel', endDrag);
+
+// ---------- Panels ----------
+function el(tag, cls) { const e = document.createElement(tag); if (cls) e.className = cls; return e; }
+function buildPanel() {
+  panelEl.innerHTML = '';
+  panelEl.classList.toggle('open', !!openId);
+  if (!openId) return;
+  for (const r of PANELS[openId]) {
+    if (r.show && !r.show()) continue;
+    const box = el('div', 'row' + (r.full ? ' full' : '')), lab = el('div', 'lab'), name = el('span'), val = el('b');
+    name.textContent = r.label; lab.append(name, val); box.append(lab);
+    if (r.t === 'r') {
+      const inp = el('input'); inp.type = 'range'; inp.min = r.min; inp.max = r.max; inp.step = r.step || 1; inp.value = S[r.k];
+      const upd = () => { val.textContent = fmt(S[r.k]) + (r.unit || ''); };
+      upd();
+      inp.addEventListener('input', () => {
+        S[r.k] = +inp.value; upd();
+        const st = stageOf(r.k);
+        if (st >= 0 && st <= 2) setDraft(true); // heavy stages: drag on the coarse grid
+        invalidate(st);
+      });
+      inp.addEventListener('change', () => setDraft(false));
+      box.append(inp);
+    } else if (r.t === 's') {
+      const seg = el('div', 'seg');
+      for (const [v, l] of r.opts) {
+        const b = el('button'); b.textContent = l;
+        if (S[r.k] == v) b.classList.add('on');
+        b.addEventListener('click', () => { S[r.k] = v; invalidate(stageOf(r.k)); buildPanel(); });
+        seg.append(b);
+      }
+      box.append(seg);
+    } else if (r.t === 'pick') {
+      const sw = el('div', 'sw'), chip = el('div', 'chip'), hint = el('span', 'hint'), hex = hsvHex(S[r.k]);
+      chip.dataset.chip = r.k; chip.style.background = hex; val.dataset.val = r.k; val.textContent = hex;
+      const ok = S.view === 'photo';
+      hint.textContent = ok ? 'тапни или веди пальцем по фото' : 'переключи на ФОТО, чтобы взять цвет';
+      if (ok) hint.classList.add('go');
+      sw.append(chip, hint); box.append(sw);
+    } else if (r.t === 'c') {
+      const sw = el('div', 'sw'), chip = el('label', 'chip'), inp = el('input');
+      inp.type = 'color'; inp.value = S[r.k]; chip.style.background = S[r.k]; val.textContent = S[r.k];
+      inp.addEventListener('input', () => { S[r.k] = inp.value; chip.style.background = inp.value; val.textContent = inp.value; invalidate(stageOf(r.k)); });
+      chip.append(inp); sw.append(chip); box.append(sw);
+    }
+    panelEl.append(box);
+  }
+}
+function openPanel(id) {
+  openId = openId === id ? null : id;
+  for (const b of tabs) b.classList.toggle('on', b.dataset.p === openId);
+  buildPanel();
+}
+for (const b of tabs) b.addEventListener('click', () => openPanel(b.dataset.p));
+
+// ---------- Top bar ----------
+function syncTop() {
+  viewTg.classList.toggle('alt', S.view !== 'photo');
+  viewLbl.textContent = S.view === 'photo' ? 'Фото' : 'Превью';
+}
+viewTg.addEventListener('click', () => {
+  S.view = S.view === 'photo' ? 'preview' : 'photo';
+  syncTop(); if (openId) buildPanel(); invalidate(4);
+});
+$('dl').addEventListener('click', () => {
+  if (!OUT) { msg = src ? 'контур не найден — нечего скачивать' : 'сначала загрузи фото'; invalidate(4); setTimeout(() => { msg = ''; invalidate(4); }, 1800); return; }
+  const url = URL.createObjectURL(new Blob([svgText()], { type: 'image/svg+xml' })), a = el('a');
+  a.href = url; a.download = fileBase + '_outline.svg';
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000); // iOS asks to confirm first; don't revoke under it
+});
+
+syncTop();
+resize();
+</script>
+</body>
+</html>
