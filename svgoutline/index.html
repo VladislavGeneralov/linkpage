@@ -773,10 +773,29 @@ viewTg.addEventListener('click', () => {
   S.view = S.view === 'photo' ? 'preview' : 'photo';
   syncTop(); if (openId) buildPanel(); invalidate(4);
 });
-$('dl').addEventListener('click', () => {
-  if (!OUT) { msg = src ? 'контур не найден — нечего скачивать' : 'сначала загрузи фото'; invalidate(4); setTimeout(() => { msg = ''; invalidate(4); }, 1800); return; }
-  const url = URL.createObjectURL(new Blob([svgText()], { type: 'image/svg+xml' })), a = el('a');
-  a.href = url; a.download = fileBase + '_outline.svg';
+// In-app browsers (Telegram, Instagram, VK… = Android WebView "; wv)" or iOS WKWebView without "Safari/")
+// ignore <a download> on a blob: URL — they just show/copy the blob link. There the share sheet is the way out.
+const UA = navigator.userAgent;
+const IOS = /iPhone|iPad|iPod/.test(UA) || (/Macintosh/.test(UA) && navigator.maxTouchPoints > 1);
+const IN_APP = /; wv\)|Telegram|FBAN|FBAV|Instagram|Line\/|VKClient/i.test(UA) || (IOS && !/Safari\//.test(UA));
+function flash(t, ms) { msg = t; invalidate(4); clearTimeout(flash.t); flash.t = setTimeout(() => { msg = ''; invalidate(4); }, ms); }
+$('dl').addEventListener('click', async () => {
+  if (!OUT) return flash(src ? 'контур не найден — нечего скачивать' : 'сначала загрузи фото', 1800);
+  const name = fileBase + '_outline.svg', text = svgText();
+  if (IOS || IN_APP) { // iOS share sheet has "Save to Files"; in-app browsers often have share but no downloads
+    const file = new File([text], name, { type: 'image/svg+xml' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); return; }
+      catch (e) { if (e.name === 'AbortError') return; } // user closed the sheet
+    }
+  }
+  if (IN_APP) {
+    let copied = false;
+    try { await navigator.clipboard.writeText(text); copied = true; } catch (e) {}
+    return flash('встроенный браузер не скачивает файлы —\nоткрой страницу в Chrome или Safari' + (copied ? '\n(код SVG скопирован)' : ''), 6000);
+  }
+  const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' })), a = el('a');
+  a.href = url; a.download = name;
   document.body.append(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000); // iOS asks to confirm first; don't revoke under it
 });
