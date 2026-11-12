@@ -1,0 +1,62 @@
+@font-face {
+  font-family: "Favorit";
+  src: url("fonts/ABCFavoritCYR-Regular.otf") format("opentype");
+  font-display: swap;
+}
+:root {
+  --ice: #BBE3F4;
+  --brown: #664F44;
+  --white: #fff;
+  --err: #b3261e;
+  --w: 560px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--ice);
+  color: var(--brown);
+  font: 17px/1.35 "Favorit", "Helvetica Neue", Arial, sans-serif;
+}
+main { max-width: var(--w); margin: 0 auto; padding: 28px 16px 64px; }
+
+h1 { font-weight: normal; font-size: 30px; line-height: 1.1; margin: 0 0 10px; letter-spacing: .01em; }
+.sub { margin: 0 0 16px; }
+.plaque { display: inline-block; background: var(--brown); color: var(--ice); padding: 8px 12px 6px; margin: 0 0 4px; }
+.intro { margin: 24px 0; }
+
+.field { display: block; border: 0; margin: 0 0 26px; padding: 0; min-width: 0; }
+.lbl { display: block; text-transform: uppercase; margin-bottom: 4px; padding: 0; }
+.hint { display: block; font-size: 14px; opacity: .8; margin-bottom: 8px; }
+input[type=text], textarea {
+  width: 100%;
+  font: inherit; color: var(--brown);
+  background: var(--white);
+  border: 1px solid var(--brown); border-radius: 0;
+  padding: 10px 12px;
+}
+textarea { resize: vertical; }
+input:focus, textarea:focus { outline: 2px solid var(--brown); outline-offset: 0; }
+.opt { display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer; }
+.opt input { width: 20px; height: 20px; margin: 0; accent-color: var(--brown); flex: none; }
+#c_other_text { margin-top: 6px; }
+
+.err { display: none; color: var(--err); font-size: 14px; margin-top: 6px; }
+.field.bad .err { display: block; }
+.field.bad input[type=text], .field.bad textarea { border-color: var(--err); }
+
+button {
+  font: inherit; text-transform: uppercase;
+  background: var(--brown); color: var(--ice);
+  border: 0; border-radius: 0; padding: 12px 18px 10px; cursor: pointer;
+}
+button:disabled { opacity: .5; cursor: default; }
+.status { margin: 14px 0 0; }
+.status.bad { color: var(--err); }
+
+.note { background: var(--white); padding: 14px; margin: 18px 0; }
+.note p { margin: 0 0 10px; }
+.note textarea { font-size: 14px; margin-bottom: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; }
+.small { font-size: 14px; }
+a { color: var(--brown); }

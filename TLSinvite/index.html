@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Tselinny Listening Sessions — заявка</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>TSELINNY LISTENING SESSIONS</h1>
+    <p class="sub">Сессии команды Целинного · середина декабря · Ателье</p>
+    <p class="plaque" id="seats">Ориентировочно 12 мест</p>
+  </header>
+
+  <section id="resume" class="note" hidden></section>
+
+  <form id="f" novalidate>
+    <p class="intro">Приглашаю вас побыть селекторами! Диджейский опыт не нужен.</p>
+
+    <label class="field" data-field="name">
+      <span class="lbl">Имя</span>
+      <input name="name" type="text" autocomplete="name" maxlength="200">
+      <span class="err">Напишите имя</span>
+    </label>
+
+    <label class="field" data-field="frame">
+      <span class="lbl">Рамка вашей селекции</span>
+      <span class="hint">Жанр, настроение, эпоха, континент или личная история</span>
+      <textarea name="frame" rows="4" maxlength="3000"></textarea>
+      <span class="err">Опишите рамку хотя бы парой слов</span>
+    </label>
+
+    <fieldset class="field" data-field="carriers">
+      <legend class="lbl">Носитель</legend>
+      <span class="hint">Можно несколько. Цифровые файлы: помогу подготовить флешку и покажу проигрыватель. Кассеты: обсудим подключение. Винил: арендуем вертушки, если наберётся несколько желающих.</span>
+      <label class="opt"><input type="checkbox" name="carriers" value="цифровые файлы"> цифровые файлы</label>
+      <label class="opt"><input type="checkbox" name="carriers" value="винил"> винил</label>
+      <label class="opt"><input type="checkbox" name="carriers" value="кассеты"> кассеты</label>
+      <label class="opt"><input type="checkbox" name="carriers" value="другое" id="c_other"> другое</label>
+      <input name="carrierOther" id="c_other_text" type="text" maxlength="300" placeholder="что именно" hidden>
+      <span class="err">Отметьте хотя бы один вариант</span>
+    </fieldset>
+
+    <fieldset class="field" data-field="dates">
+      <legend class="lbl">Я могу в эти даты</legend>
+      <span class="hint">Можно несколько</span>
+      <div id="dates"></div>
+      <span class="err">Отметьте хотя бы одну дату</span>
+    </fieldset>
+
+    <label class="field" data-field="comment">
+      <span class="lbl">Комментарий</span>
+      <span class="hint">Необязательно</span>
+      <textarea name="comment" rows="3" maxlength="3000"></textarea>
+    </label>
+
+    <button type="submit" id="send">Отправить заявку</button>
+    <p id="status" class="status" hidden></p>
+
+    <div id="fallback" class="note" hidden>
+      <p>Не получилось достучаться до сервера. Заявка сохранена в этом браузере и отправится сама, когда вы снова откроете страницу.</p>
+      <button type="button" id="fb_retry">Попробовать ещё раз</button>
+    </div>
+  </form>
+
+  <section id="done" hidden>
+    <p class="plaque">Спасибо, заявка записана!</p>
+    <p id="done_text"></p>
+    <p class="small">Если захотите что-то поменять, напишите Владу. <a href="#" id="again">Заполнить ещё одну заявку</a></p>
+  </section>
+</main>
+<script src="form.js"></script>
+</body>
+</html>
