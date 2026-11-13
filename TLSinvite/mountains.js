@@ -23,7 +23,7 @@
   const DEPTH = 40;                       // длина «конвейера» гор в мировых единицах
   const LFO_A = { sec: 47, amt: 0.25 };   // «энергия»: скорость + высота
   const LFO_B = { sec: 29, amt: 0.20 };   // «бас»: добавка к тому же
-  const GLASS = { size: 1.8, alpha: 1.0 }; // расфокус за плашкой: во сколько крупнее; яркость пятна
+  const GLASS = { size: 1.5, alpha: 1.0 }; // расфокус за плашкой: во сколько крупнее; яркость пятна
   const TAN = Math.tan(25 * Math.PI / 180); // камера как в оригинале: fov 50°, z = 20
 
   const canvas = document.createElement("canvas");

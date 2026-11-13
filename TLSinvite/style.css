@@ -23,7 +23,7 @@ main {
   max-width: var(--w); margin: 0 auto; padding: 28px 16px 48px;
   min-height: 100vh; min-height: 100lvh;
   /* «стекло»: лёгкая тонировка + края; размытие частиц делает mountains.js в шейдере */
-  background: rgba(12, 12, 14, .22);
+  background: rgba(12, 12, 14, .16);
   border-left: 1px solid rgba(255, 255, 255, .14); border-right: 1px solid rgba(255, 255, 255, .14);
 }
 @media (min-width: 640px) { main { padding: 40px 32px 56px; } }
