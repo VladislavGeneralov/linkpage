@@ -23,7 +23,7 @@ main {
   max-width: var(--w); margin: 0 auto; padding: 28px 16px 48px;
   min-height: 100vh; min-height: 100lvh;
   /* «стекло»: лёгкая тонировка + края; размытие частиц делает mountains.js в шейдере */
-  background: rgba(12, 12, 14, .16);
+  background: rgba(12, 12, 14, .18);
   border-left: 1px solid rgba(255, 255, 255, .14); border-right: 1px solid rgba(255, 255, 255, .14);
 }
 @media (min-width: 640px) { main { padding: 40px 32px 56px; } }
@@ -40,7 +40,7 @@ h1 { font-weight: normal; font-size: 30px; line-height: 1.1; margin: 0 0 10px; l
 input[type=text], textarea {
   width: 100%;
   font: inherit; color: var(--fg);
-  background: rgba(0, 0, 0, .35);
+  background: rgba(0, 0, 0, .20);   /* поля: +20% поверх плашки */
   border: .5px solid rgba(255, 255, 255, .7); border-radius: 0;   /* серый, как подсказки (.hint) */
   padding: 10px 12px;
 }
