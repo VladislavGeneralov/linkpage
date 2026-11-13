@@ -6,7 +6,7 @@
 
   // ---------- настройки ----------
   const WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzTGenDzHUn_dmSzgrQyjTprK217fPdjZ0UvRCClLgZNnGAKlA1Al5mjOfLKKE6qepbug/exec";   // ссылка …/exec после развёртывания Apps Script; пусто = локальный просмотр
-  const CAPACITY = 12;     // показывается, пока сервер не ответил; на сервере своя константа в Code.gs
+  const CAPACITY = 8;      // слотов; показывается, пока сервер не ответил; на сервере своя константа в Code.gs
   const DATES = [
     "19 декабря, суббота, 16:30–18:30",
     "20 декабря, воскресенье, 16:30–18:30",
@@ -141,9 +141,8 @@
         if (j && j.ok) { c = j.count; cap = j.capacity || cap; }
       } catch (_) { /* без счётчика */ }
     }
-    let s = `Ориентировочно ${cap} ${plural(cap, ["место", "места", "мест"])}`;
-    if (c != null) s += `, ${c} ${plural(c, ["заявка уже отправлена", "заявки уже отправлены", "заявок уже отправлено"])}`;
-    s += ". First come, first served.";
+    let s = `Всего доступно ${cap} ${plural(cap, ["слот", "слота", "слотов"])} по часу.`;
+    if (c != null) s += ` Уже отправлено заявок: ${c}.`;
     if (c != null && c >= cap) s += " Но вы всё равно отправьте заявку, вдруг место освободится.";
     $("#seats").textContent = s;
   }
@@ -155,6 +154,7 @@
     return {
       name: field("name").value.trim(),
       frame: field("frame").value.trim(),
+      duration: (form.querySelector('input[name="duration"]:checked') || {}).value || "60 минут",
       carriers: checked("carriers").filter(v => v !== "другое"),
       otherOn,
       carrierOther: otherOn ? field("carrierOther").value.trim() : "",
@@ -168,6 +168,7 @@
     field("frame").value = d.frame || "";
     field("comment").value = d.comment || "";
     field("carrierOther").value = d.carrierOther || "";
+    if (d.duration) form.querySelectorAll('input[name="duration"]').forEach(i => { i.checked = i.value === d.duration; });
     form.querySelectorAll('input[name="carriers"]').forEach(i => {
       i.checked = i.value === "другое" ? !!d.otherOn : (d.carriers || []).includes(i.value);
     });
@@ -191,7 +192,7 @@
     $("#resume").hidden = true;
     $("#done").hidden = false;
     $("#done_text").textContent = res.waitlist
-      ? `Все ${cap} мест уже заняты, ваш номер в очереди: ${res.pos}. Если место освободится, Влад напишет.`
+      ? `Все ${cap} ${plural(cap, ["слот", "слота", "слотов"])} уже заняты, ваш номер в очереди: ${res.pos}. Если место освободится, Влад напишет.`
       : `Ваш номер в очереди: ${res.pos} из ${cap}.`;
   }
 

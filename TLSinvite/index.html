@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Tselinny Listening Sessions — заявка</title>
+<title>Tselinny Listening Sessions: Team — open-call</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
   <header>
-    <h1>TSELINNY LISTENING SESSIONS</h1>
-    <p class="sub">Сессии команды Целинного · середина декабря · Ателье</p>
-    <p class="plaque" id="seats">Ориентировочно 12 мест</p>
+    <h1>TSELINNY LISTENING SESSIONS: TEAM</h1>
+    <p class="sub">OPEN-CALL<br>Dec 19, 20, 26, 27 &nbsp;16:30–18:30</p>
+    <p class="plaque" id="seats">Всего доступно 8 слотов по часу.</p>
   </header>
 
   <section id="resume" class="note" hidden></section>
@@ -32,6 +32,13 @@
       <textarea name="frame" rows="4" maxlength="3000"></textarea>
       <span class="err">Опишите рамку хотя бы парой слов</span>
     </label>
+
+    <fieldset class="field" data-field="duration">
+      <legend class="lbl">Длительность слота</legend>
+      <label class="opt"><input type="radio" name="duration" value="60 минут" checked> 60 минут</label>
+      <label class="opt"><input type="radio" name="duration" value="45 минут"> 45 минут</label>
+      <label class="opt"><input type="radio" name="duration" value="30 минут"> 30 минут</label>
+    </fieldset>
 
     <fieldset class="field" data-field="carriers">
       <legend class="lbl">Носитель</legend>
@@ -71,6 +78,8 @@
     <p id="done_text"></p>
     <p class="small">Если захотите что-то поменять, напишите Владу. <a href="#" id="again">Заполнить ещё одну заявку</a></p>
   </section>
+
+  <footer><img src="img/tselinny_logo_white.png" alt="Tselinny Center of Contemporary Culture" width="640" height="368"></footer>
 </main>
 <script src="form.js"></script>
 </body>
