@@ -23,7 +23,7 @@
   const DEPTH = 40;                       // длина «конвейера» гор в мировых единицах
   const LFO_A = { sec: 47, amt: 0.25 };   // «энергия»: скорость + высота
   const LFO_B = { sec: 29, amt: 0.20 };   // «бас»: добавка к тому же
-  const GLASS = { size: 2.6, alpha: 0.5 }; // расфокус за плашкой: во сколько крупнее и тусклее
+  const GLASS = { size: 1.8, alpha: 1.0 }; // расфокус за плашкой: во сколько крупнее; яркость пятна
   const TAN = Math.tan(25 * Math.PI / 180); // камера как в оригинале: fov 50°, z = 20
 
   const canvas = document.createElement("canvas");
@@ -93,7 +93,7 @@
     void main() {
       float d = length(gl_PointCoord - 0.5);
       if (d > 0.5) discard;
-      float soft = (1.0 - 2.0 * d); soft *= soft * ${GLASS.alpha.toFixed(2)};   // мягкое пятно
+      float soft = smoothstep(0.5, 0.0, d) * ${GLASS.alpha.toFixed(2)};   // мягкое пятно, света столько же, сколько у резкой точки
       gl_FragColor = vec4(vCol, mix(smoothstep(0.5, 0.36, d), soft, vBlur));
     }`;
 
