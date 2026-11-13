@@ -141,12 +141,10 @@
         if (j && j.ok) { c = j.count; cap = j.capacity || cap; }
       } catch (_) { /* без счётчика */ }
     }
-    let s = `Всего доступно ${cap} ${plural(cap, ["слот", "слота", "слотов"])} по часу.
-First come, first served.`;
-    if (c != null) s += `
-Уже отправлено заявок: ${c}`;
-    if (c != null && c >= cap) s += "
-Всё равно отправляйте заявку!";
+    const lines = [`Всего доступно ${cap} ${plural(cap, ["слот", "слота", "слотов"])} по часу.`, "First come, first served."];
+    if (c != null) lines.push(`Уже отправлено заявок: ${c}`);
+    if (c != null && c >= cap) lines.push("Всё равно отправляйте заявку!");
+    const s = lines.join("\n");
     $("#seats").textContent = s;
   }
 
