@@ -41,12 +41,12 @@ input[type=text], textarea {
   width: 100%;
   font: inherit; color: var(--fg);
   background: rgba(0, 0, 0, .35);
-  border: 1px solid var(--fg); border-radius: 0;
+  border: .5px solid rgba(255, 255, 255, .7); border-radius: 0;   /* серый, как подсказки (.hint) */
   padding: 10px 12px;
 }
 ::placeholder { color: var(--fg); opacity: .45; }
 textarea { resize: vertical; }
-input:focus, textarea:focus { outline: 2px solid var(--fg); outline-offset: 0; }
+input:focus, textarea:focus { outline: 1px solid var(--fg); outline-offset: 0; }
 .opt { display: flex; align-items: center; gap: 10px; padding: 7px 0; cursor: pointer; }
 .opt input { width: 20px; height: 20px; margin: 0; accent-color: var(--fg); flex: none; }
 #c_other_text { margin-top: 6px; }
