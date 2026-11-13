@@ -42,13 +42,13 @@
 
     <fieldset class="field" data-field="carriers">
       <legend class="lbl">Носитель</legend>
-      <span class="hint">Можно несколько. Цифровые файлы: помогу подготовить флешку и покажу проигрыватель. Кассеты: обсудим подключение. Винил: арендуем вертушки, если наберётся несколько желающих.</span>
-      <label class="opt"><input type="checkbox" name="carriers" value="цифровые файлы"> цифровые файлы</label>
-      <label class="opt"><input type="checkbox" name="carriers" value="винил"> винил</label>
-      <label class="opt"><input type="checkbox" name="carriers" value="кассеты"> кассеты</label>
-      <label class="opt"><input type="checkbox" name="carriers" value="другое" id="c_other"> другое</label>
+      <span class="hint">Цифровые файлы: помогу подготовить флешку и покажу проигрыватель. Кассеты: обсудим подключение. Винил: арендуем вертушки, если наберётся несколько желающих.</span>
+      <label class="opt"><input type="radio" name="carriers" value="цифровые файлы"> цифровые файлы</label>
+      <label class="opt"><input type="radio" name="carriers" value="винил"> винил</label>
+      <label class="opt"><input type="radio" name="carriers" value="кассеты"> кассеты</label>
+      <label class="opt"><input type="radio" name="carriers" value="другое" id="c_other"> другое</label>
       <input name="carrierOther" id="c_other_text" type="text" maxlength="300" placeholder="что именно" hidden>
-      <span class="err">Отметьте хотя бы один вариант</span>
+      <span class="err">Выберите вариант</span>
     </fieldset>
 
     <fieldset class="field" data-field="dates">

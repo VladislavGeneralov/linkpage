@@ -73,7 +73,7 @@
   window.addEventListener("online", () => { if (st.pending && !st.sent) send(); });
 
   function onEdit(e) {
-    if (e.target.id === "c_other") toggleOther();
+    if (e.target.name === "carriers") toggleOther();  // radio: «другое» снимается выбором другого варианта
     const f = e.target.closest(".field");
     if (f) f.classList.remove("bad");
     // Если прошлая попытка могла дойти до сервера, а человек правит заявку, — новый id:
