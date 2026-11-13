@@ -7,7 +7,7 @@
   --bg: #000;
   --fg: #fff;
   --err: #ff6b5e;
-  --w: 560px;
+  --w: 620px;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -18,7 +18,13 @@ body {
   color: var(--fg);
   font: 17px/1.35 "Favorit", "Helvetica Neue", Arial, sans-serif;
 }
-main { max-width: var(--w); margin: 0 auto; padding: 28px 16px 48px; }
+/* полупрозрачная вертикальная плашка под формой, приглушает частицы фона (mountains.js) */
+main {
+  max-width: var(--w); margin: 0 auto; padding: 28px 16px 48px;
+  min-height: 100vh; min-height: 100lvh;
+  background: rgba(0, 0, 0, .65);
+}
+@media (min-width: 640px) { main { padding: 40px 32px 56px; } }
 
 h1 { font-weight: normal; font-size: 30px; line-height: 1.1; margin: 0 0 10px; letter-spacing: .01em; }
 .sub { margin: 0 0 16px; }
