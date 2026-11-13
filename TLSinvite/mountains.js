@@ -6,6 +6,8 @@
 // - Пауза в фоне вкладки (requestAnimationFrame сам), «уменьшить движение» = один статичный кадр.
 // Подключение: <script src="mountains.js" defer></script>. Холст встаёт за страницей (z-index:-1),
 // поэтому у <html> не должно быть своего фона (фон body при этом можно).
+// «Стекло»: частицы за <main> рисуются крупными мягкими пятнами (расфокус) прямо в шейдере —
+// без backdrop-filter и лишних проходов, цена ≈ ноль.
 // Для проверки: ?fps — счётчик кадров, ?n=3000 — частиц, ?size=1.8, ?dim=1 — яркость.
 (() => {
   "use strict";
@@ -21,6 +23,7 @@
   const DEPTH = 40;                       // длина «конвейера» гор в мировых единицах
   const LFO_A = { sec: 47, amt: 0.25 };   // «энергия»: скорость + высота
   const LFO_B = { sec: 29, amt: 0.20 };   // «бас»: добавка к тому же
+  const GLASS = { size: 2.6, alpha: 0.5 }; // расфокус за плашкой: во сколько крупнее и тусклее
   const TAN = Math.tan(25 * Math.PI / 180); // камера как в оригинале: fov 50°, z = 20
 
   const canvas = document.createElement("canvas");
@@ -38,7 +41,9 @@
     attribute vec4 aB;   // jitterZ, phase + 8*kind, bright, sizeJ
     uniform vec4 uF;     // time, flight, amp, dim
     uniform vec4 uV;     // aspect, pxScale, focal
+    uniform vec4 uP;     // плашка: левый и правый край в NDC, ширина перехода
     varying vec3 vCol;
+    varying float vBlur;
     const float D = ${DEPTH.toFixed(1)};
     float terrain(float x, float z) {
       return 1.5*sin(x*0.15 + z*0.10) + 0.9*sin(x*0.07 - z*0.18 + 1.3)
@@ -77,18 +82,22 @@
       float d = 20.0 - p.z;                      // расстояние до камеры
       float size = (1.7 * fog + 0.3) * aB.w * mix(1.0, 0.8, g) * mix(1.0, 1.35, e);
       gl_Position = d > 0.5 ? vec4(p.x * uV.z / uV.x, p.y * uV.z, 0.0, d) : vec4(2.0, 2.0, 2.0, 1.0);
-      gl_PointSize = d > 0.5 ? min(size * 33.0 / d, 5.25) * uV.y : 0.0;
+      float sx = p.x * uV.z / uV.x / d;          // x на экране, -1..1
+      vBlur = smoothstep(uP.x - uP.z, uP.x + uP.z, sx) * (1.0 - smoothstep(uP.y - uP.z, uP.y + uP.z, sx));
+      gl_PointSize = d > 0.5 ? min(size * 33.0 / d, 5.25) * uV.y * (1.0 + vBlur * ${(GLASS.size - 1).toFixed(2)}) : 0.0;
     }`;
   const FS = `
     precision mediump float;
     varying vec3 vCol;
+    varying float vBlur;
     void main() {
       float d = length(gl_PointCoord - 0.5);
       if (d > 0.5) discard;
-      gl_FragColor = vec4(vCol, smoothstep(0.5, 0.36, d));
+      float soft = (1.0 - 2.0 * d); soft *= soft * ${GLASS.alpha.toFixed(2)};   // мягкое пятно
+      gl_FragColor = vec4(vCol, mix(smoothstep(0.5, 0.36, d), soft, vBlur));
     }`;
 
-  let prog, buf, uF, uV, aspect = 0, raf = 0, last = 0, t = 0, flight = 0;
+  let prog, buf, uF, uV, uP, aspect = 0, raf = 0, last = 0, t = 0, flight = 0;
   let frames = 0, fpsT = 0, fpsEl = null;
 
   function shader(type, src) {
@@ -109,6 +118,7 @@
     gl.useProgram(prog);
     uF = gl.getUniformLocation(prog, "uF");
     uV = gl.getUniformLocation(prog, "uV");
+    uP = gl.getUniformLocation(prog, "uP");
     buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
     gl.enableVertexAttribArray(0); gl.enableVertexAttribArray(1);
@@ -157,6 +167,15 @@
     // сетку пересобираем только при заметной смене пропорций (поворот), не от прыжков адресной строки
     if (!aspect || Math.abs(asp / aspect - 1) > 0.15) { aspect = asp; build(asp); }
     gl.uniform4f(uV, asp, h / 2160 * SIZE * 1.1, 1 / TAN, 0);
+    panel();
+  }
+
+  // где плашка (<main>) по горизонтали — в координатах -1..1; нет плашки — расфокуса нет
+  function panel() {
+    const m = document.querySelector("main"), cw = canvas.clientWidth || 1;
+    if (!m) { gl.uniform4f(uP, 9, 9, 0.01, 0); return; }
+    const r = m.getBoundingClientRect(), c = canvas.getBoundingClientRect();
+    gl.uniform4f(uP, (r.left - c.left) / cw * 2 - 1, (r.right - c.left) / cw * 2 - 1, 12 / cw * 2, 0);
   }
 
   function draw(dt) {
